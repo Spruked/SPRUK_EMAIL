@@ -1,0 +1,17 @@
+name = "rdrive-email-receiver"
+main = "index.js"
+compatibility_date = "2026-01-01"
+
+# Email Routing binding
+[[email]]
+name = "EMAIL_HANDLER"
+
+# Secrets to set via wrangler secret put:
+# RDRIVE_WEBHOOK_URL = "http://your-server:8000/api/emails/receive"
+# WEBHOOK_SECRET = "your-webhook-secret"
+
+# Optional D1 fallback database
+# [[d1_databases]]
+# binding = "D1_FALLBACK"
+# database_name = "email-fallback"
+# database_id = "your-d1-id"

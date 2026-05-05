@@ -1,0 +1,26 @@
+Spruk_Email/
+|-- backend/
+|   |-- .env.example
+|   |-- main.py
+|   `-- requirements.txt
+|-- docs/
+|   `-- SETUP.md
+|-- frontend/
+|   |-- build/
+|   |-- node_modules/
+|   |-- package-lock.json
+|   |-- package.json
+|   |-- public/
+|   |   `-- index.html
+|   `-- src/
+|       |-- App.css
+|       |-- App.js
+|       `-- index.js
+|-- worker/
+|   |-- index.js
+|   `-- wrangler.toml
+|-- README.md
+|-- setup.bat
+|-- start_backend.bat
+|-- start_frontend.bat
+`-- tree.txt

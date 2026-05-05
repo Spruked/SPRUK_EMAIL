@@ -1,0 +1,386 @@
+/* ============================================
+   R-DRIVE EMAIL CLIENT - Styles
+   ============================================ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.header {
+  background: #1a1a2e;
+  color: white;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.header-left h1 {
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.menu-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.header-center {
+  flex: 1;
+  max-width: 500px;
+}
+
+.search-box {
+  width: 100%;
+  padding: 8px 15px;
+  border-radius: 20px;
+  border: none;
+  background: rgba(255,255,255,0.15);
+  color: white;
+  font-size: 0.9rem;
+}
+
+.search-box::placeholder { color: rgba(255,255,255,0.6); }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.compose-btn {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.compose-btn:hover { background: #45a049; }
+
+.unread-dot {
+  background: #ff4444;
+  color: white;
+  border-radius: 50%;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+}
+
+/* Main Layout */
+.main-container {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 260px;
+  background: white;
+  border-right: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  padding: 15px 0;
+}
+
+.folder-list {
+  padding: 0 10px;
+}
+
+.folder-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 15px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+
+.folder-item:hover { background: #f0f0f0; }
+.folder-item.active { background: #e3f2fd; color: #1976d2; }
+
+.folder-icon { font-size: 1.1rem; }
+.folder-name { flex: 1; text-transform: capitalize; }
+.folder-unread {
+  background: #ff4444;
+  color: white;
+  border-radius: 50%;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+}
+.folder-count {
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.contacts-section {
+  margin-top: 20px;
+  padding: 0 15px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.contacts-section h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: #999;
+  margin-bottom: 10px;
+}
+
+.contact-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.contact-email { color: #555; }
+.contact-count { color: #999; }
+
+.storage-info {
+  padding: 15px;
+  border-top: 1px solid #e0e0e0;
+  font-size: 0.75rem;
+  color: #999;
+}
+
+.storage-info small { display: block; margin-bottom: 4px; }
+
+/* Email List */
+.email-list {
+  flex: 1;
+  overflow-y: auto;
+  background: white;
+}
+
+.email-list.split {
+  flex: 0 0 40%;
+  border-right: 1px solid #e0e0e0;
+}
+
+.email-item {
+  padding: 15px 20px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.email-item:hover { background: #fafafa; }
+.email-item.unread { background: #f0f7ff; border-left: 3px solid #1976d2; }
+.email-item.selected { background: #e3f2fd; }
+
+.email-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.email-sender {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.email-date {
+  color: #999;
+  font-size: 0.8rem;
+}
+
+.email-subject {
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: #444;
+}
+
+.email-preview {
+  color: #999;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.email-actions {
+  display: none;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.email-item:hover .email-actions {
+  display: flex;
+}
+
+.email-actions button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.email-actions button:hover { background: #e0e0e0; }
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+
+.empty-hint {
+  font-size: 0.85rem;
+  margin-top: 10px;
+  color: #bbb;
+}
+
+/* Email Detail */
+.email-detail {
+  flex: 1;
+  background: white;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.detail-header {
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+}
+
+.close-btn {
+  float: right;
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: #999;
+}
+
+.detail-header h2 {
+  font-size: 1.3rem;
+  margin-bottom: 10px;
+  padding-right: 30px;
+}
+
+.detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.detail-body {
+  line-height: 1.6;
+  color: #444;
+}
+
+.detail-body pre {
+  white-space: pre-wrap;
+  font-family: inherit;
+  line-height: 1.6;
+}
+
+.detail-actions {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  gap: 10px;
+}
+
+.detail-actions button {
+  padding: 8px 16px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.detail-actions button:hover { background: #f5f5f5; }
+
+/* Compose Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.compose-modal {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.compose-modal h2 {
+  margin-bottom: 20px;
+}
+
+.compose-modal input,
+.compose-modal textarea {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.compose-modal textarea {
+  resize: vertical;
+  min-height: 200px;
+}
+
+.compose-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.compose-actions button[type="submit"] {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.compose-actions button[type="button"] {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  padding: 10px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+}
