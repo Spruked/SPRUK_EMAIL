@@ -66,19 +66,28 @@ export default {
 
       // Forward to your R: drive webhook endpoint
       // CHANGE THIS to your actual R: drive server URL
-      const webhookUrl = env.RDRIVE_WEBHOOK_URL || 'http://your-rdrive-server:8000/api/emails/receive';
+      const webhookUrl = env.RDRIVE_WEBHOOK_URL;
+      if (!webhookUrl) {
+        throw new Error('Missing RDRIVE_WEBHOOK_URL secret');
+      }
+
+      const webhookSecret = env.WEBHOOK_SECRET;
+      if (!webhookSecret) {
+        throw new Error('Missing WEBHOOK_SECRET secret');
+      }
 
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Email-Secret': env.WEBHOOK_SECRET || 'your-secret-key-here'
+          'X-Email-Secret': webhookSecret
         },
         body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
-        console.error('Failed to forward to R: drive:', await response.text());
+        const errorText = await response.text();
+        console.error(`Failed to forward to R: drive: ${response.status} ${errorText}`);
         // Store in D1 as fallback if configured
         if (env.D1_FALLBACK) {
           await env.D1_FALLBACK.prepare(`
@@ -86,13 +95,14 @@ export default {
             VALUES (?, ?, ?, ?, ?, ?)
           `).bind(messageId, from, subject, rawEmail, new Date().toISOString(), false).run();
         }
+        throw new Error(`Webhook forward failed with ${response.status}`);
       } else {
         console.log(`Email from ${from} forwarded to R: drive successfully`);
       }
 
     } catch (error) {
       console.error('Worker error:', error);
-      // Don't reject - Cloudflare will retry
+      throw error;
     }
   },
 

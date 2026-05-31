@@ -38,6 +38,15 @@ body {
   font-weight: 600;
 }
 
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px;
+}
+
 .menu-btn {
   background: none;
   border: none;
@@ -69,6 +78,20 @@ body {
   gap: 15px;
 }
 
+.account-select {
+  min-width: 220px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+  color: white;
+  font-size: 0.85rem;
+}
+
+.account-select option {
+  color: #222;
+}
+
 .compose-btn {
   background: #4CAF50;
   color: white;
@@ -80,6 +103,18 @@ body {
 }
 
 .compose-btn:hover { background: #45a049; }
+
+.header-btn {
+  background: rgba(255,255,255,0.15);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.22);
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.header-btn:hover { background: rgba(255,255,255,0.24); }
 
 .unread-dot {
   background: #ff4444;
@@ -94,6 +129,7 @@ body {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* Sidebar */
@@ -104,13 +140,51 @@ body {
   display: flex;
   flex-direction: column;
   padding: 15px 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.folder-list {
+.folder-list,
+.mailbox-list {
   padding: 0 10px;
 }
 
-.folder-item {
+.mailbox-list {
+  flex: 0 0 auto;
+  max-height: 42vh;
+  overflow-y: auto;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.folder-list {
+  flex: 0 0 auto;
+  padding-top: 10px;
+}
+
+.account-panel {
+  padding: 8px 15px 14px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-panel label {
+  color: #999;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.account-panel strong {
+  font-size: 0.82rem;
+  color: #444;
+  overflow-wrap: anywhere;
+}
+
+.folder-item,
+.mailbox-item {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -120,11 +194,18 @@ body {
   margin-bottom: 2px;
 }
 
-.folder-item:hover { background: #f0f0f0; }
-.folder-item.active { background: #e3f2fd; color: #1976d2; }
+.folder-item:hover,
+.mailbox-item:hover { background: #f0f0f0; }
+.folder-item.active,
+.mailbox-item.active { background: #e3f2fd; color: #1976d2; }
 
 .folder-icon { font-size: 1.1rem; }
 .folder-name { flex: 1; text-transform: capitalize; }
+.mailbox-name {
+  flex: 1;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
 .folder-unread {
   background: #ff4444;
   color: white;
@@ -138,17 +219,56 @@ body {
 }
 
 .contacts-section {
-  margin-top: 20px;
+  margin-top: 12px;
   padding: 0 15px;
-  flex: 1;
-  overflow-y: auto;
+  flex: 0 0 auto;
 }
 
+.section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-title-row h3,
 .contacts-section h3 {
   font-size: 0.8rem;
   text-transform: uppercase;
   color: #999;
-  margin-bottom: 10px;
+}
+
+.section-title-row button {
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.contact-form {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.contact-form input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.contact-form button {
+  border: none;
+  border-radius: 6px;
+  padding: 8px;
+  background: #1976d2;
+  color: white;
+  cursor: pointer;
 }
 
 .contact-item {
@@ -161,6 +281,194 @@ body {
 
 .contact-email { color: #555; }
 .contact-count { color: #999; }
+
+
+.contacts-list.compact {
+  max-height: 135px;
+  overflow-y: auto;
+}
+
+.contacts-workspace {
+  display: flex;
+  gap: 24px;
+  min-height: 400px;
+}
+.contacts-list-panel {
+  width: 260px;
+  border-right: 1px solid #eee;
+  padding-right: 18px;
+  overflow-y: auto;
+}
+.contacts-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.contacts-list-full {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.contact-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f5f5f5;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.contact-list-item.selected {
+  background: #e3f2fd;
+}
+.contact-badge {
+  background: #1976d2;
+  color: white;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  padding: 2px 7px;
+  margin-left: auto;
+}
+.contact-photo-large {
+  display: block;
+  margin: 0 auto 10px auto;
+  border: 2px solid #eee;
+}
+.contact-detail-panel {
+  flex: 1;
+  padding-left: 24px;
+  min-width: 0;
+}
+.contact-detail-form input,
+.contact-detail-form textarea {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+.contact-detail-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.contact-detail-actions button {
+  padding: 8px 18px;
+  border: 1px solid #ddd;
+  background: #f5f5f5;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.contact-detail-actions button[type="submit"] {
+  background: #1976d2;
+  color: white;
+  border: none;
+}
+.contact-detail-empty {
+  color: #999;
+  text-align: center;
+  margin-top: 80px;
+}
+.linked-emails-panel {
+  margin-top: 24px;
+}
+.linked-emails-panel h4 {
+  font-size: 1rem;
+  margin-bottom: 8px;
+}
+.linked-emails-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  background: #fafbfc;
+  padding: 8px;
+}
+.linked-email-item {
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.93rem;
+}
+.linked-email-item:last-child {
+  border-bottom: none;
+}
+.linked-email-subject {
+  color: #1976d2;
+  font-weight: 500;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.linked-email-date {
+  color: #888;
+  font-size: 0.85rem;
+  margin-left: 12px;
+}
+.connections-modal {
+  min-width: 420px;
+}
+.connections-status-list {
+  margin-bottom: 18px;
+}
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+.status-label {
+  flex: 1;
+  color: #555;
+}
+.status-indicator {
+  min-width: 60px;
+  text-align: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: #eee;
+  color: #555;
+}
+.status-indicator.ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.status-indicator.error {
+  background: #ffebee;
+  color: #c62828;
+}
+.connections-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.connections-actions button {
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+.connections-message {
+  min-height: 22px;
+  color: #1976d2;
+  margin-bottom: 10px;
+}
+.ask-orb-panel {
+  margin-top: 18px;
+  padding: 12px;
+  background: #f5f7fb;
+  border-radius: 8px;
+}
+.ask-orb-panel h3 {
+  font-size: 1rem;
+  margin-bottom: 7px;
+}
 
 .storage-info {
   padding: 15px;
@@ -176,6 +484,7 @@ body {
   flex: 1;
   overflow-y: auto;
   background: white;
+  min-height: 0;
 }
 
 .email-list.split {
@@ -215,6 +524,36 @@ body {
   font-weight: 500;
   margin-bottom: 4px;
   color: #444;
+}
+
+.email-recipient {
+  color: #777;
+  font-size: 0.78rem;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.email-status {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  background: #eceff1;
+  color: #455a64;
+}
+
+.email-status.sent {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.email-status.failed {
+  background: #ffebee;
+  color: #c62828;
 }
 
 .email-preview {
@@ -262,6 +601,7 @@ body {
   background: white;
   overflow-y: auto;
   padding: 20px;
+  min-height: 0;
 }
 
 .detail-header {
@@ -341,13 +681,165 @@ body {
   max-width: 600px;
   max-height: 90vh;
   overflow-y: auto;
+  min-height: 0;
+}
+
+.contacts-modal,
+.connections-modal {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  width: 92%;
+  max-width: 760px;
+  max-height: 88vh;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.modal-header h2 {
+  font-size: 1.2rem;
+}
+
+.contact-form.large {
+  grid-template-columns: 1fr 1.4fr auto;
+  align-items: center;
+}
+
+.contact-form.large input,
+.contact-form.large button {
+  margin: 0;
+}
+
+.contacts-table {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.contact-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.contact-row div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.contact-row strong,
+.contact-row span {
+  overflow-wrap: anywhere;
+}
+
+.contact-row div span {
+  color: #777;
+  font-size: 0.84rem;
+}
+
+.connection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.connection-panel {
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.connection-panel h3 {
+  font-size: 0.95rem;
+}
+
+.panel-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  margin-bottom: 8px;
+}
+
+.connection-panel p {
+  color: #666;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.connection-panel button {
+  border: none;
+  background: #1976d2;
+  color: white;
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.connection-state {
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.connection-state.online {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.connection-state.offline {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.status-line {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #f5f7fb;
+  border: 1px solid #e0e6f2;
+  border-radius: 8px;
+  color: #334;
+  font-size: 0.9rem;
+}
+
+.empty-state.small {
+  padding: 24px;
 }
 
 .compose-modal h2 {
   margin-bottom: 20px;
 }
 
+.brand-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.brand-strip strong {
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
 .compose-modal input,
+.compose-modal select,
 .compose-modal textarea {
   width: 100%;
   padding: 12px;
@@ -383,4 +875,36 @@ body {
   padding: 10px 24px;
   border-radius: 6px;
   cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .header {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .header-center {
+    order: 3;
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .header-right {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .account-select {
+    min-width: 180px;
+  }
+
+  .contact-form.large,
+  .connection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-actions,
+  .compose-actions {
+    flex-wrap: wrap;
+  }
 }

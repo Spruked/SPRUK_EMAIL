@@ -1,5 +1,5 @@
 @echo off
-REM R-Drive Email Client - Quick Start
+REM Pro Prime Series Mail - Quick Start
 REM Run this from the project root
 
 echo ==========================================
