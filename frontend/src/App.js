@@ -917,7 +917,7 @@ function App() {
                 <span className={`connection-state ${integrationStatus?.orb?.online ? 'online' : 'offline'}`}>
                   {integrationStatus?.orb?.online ? 'Online' : 'Offline'}
                 </span>
-                <p>{integrationStatus?.orb?.api_url || 'http://127.0.0.1:8000/api/v1'}</p>
+                <p>{integrationStatus?.orb?.api_url || 'Unknown (not configured)'}</p>
                 <button type="button" onClick={testOrbConnection}>Test ORB</button>
               </div>
             </div>

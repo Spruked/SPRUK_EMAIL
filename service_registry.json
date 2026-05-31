@@ -1,0 +1,9 @@
+{
+  "services": [
+    {
+      "name": "desktop_orb",
+      "api_url": "http://127.0.0.1:21100/api/v1",
+      "health_url": "http://127.0.0.1:21100/api/v1/readiness"
+    }
+  ]
+}

@@ -18,9 +18,51 @@ import json
 import hashlib
 import asyncio
 import httpx
+
 import os
 import html as html_escape
 import re
+import json as _json
+
+# --- ORB Service Discovery ---
+
+def discover_orb_service():
+    # 1. Try mesh/service_registry.json (canonical substrate location)
+    mesh_path = Path("R:/R_Drive_Substrate/mesh/service_registry.json")
+    if mesh_path.exists():
+        try:
+            with open(mesh_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            orb = data.get("services", {}).get("desktop_orb", {})
+            api_url = orb.get("api_url")
+            health = orb.get("health")
+            if api_url:
+                health_url = api_url.rstrip("/") + (health if health and health.startswith("/") else "/readiness")
+                return (api_url, health_url)
+        except Exception:
+            pass
+    # 2. Try local service_registry.json (legacy fallback)
+    registry_path = Path(__file__).parent.parent / "service_registry.json"
+    if registry_path.exists():
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            for svc in data.get("services", []):
+                if svc.get("name", "").lower() == "desktop_orb":
+                    return (
+                        svc.get("api_url", "http://127.0.0.1:21100/api/v1"),
+                        svc.get("health_url", "http://127.0.0.1:21100/api/v1/readiness")
+                    )
+        except Exception:
+            pass
+    # 3. Fallback to env
+    return (
+        os.getenv("ORB_API_URL", "http://127.0.0.1:21100/api/v1"),
+        os.getenv("ORB_HEALTH_URL", "http://127.0.0.1:21100/api/v1/readiness")
+    )
+
+# Use discovered ORB URLs
+ORB_API_URL, ORB_HEALTH_URL = discover_orb_service()
 
 try:
     import bleach
@@ -87,8 +129,7 @@ FRONTEND_BUILD_DIR = Path(os.getenv(
 ))
 CRM_API_URL = os.getenv("CALI_API_URL", os.getenv("CALI_CRM_API_URL", "http://127.0.0.1:21000")).rstrip("/")
 CRM_ROOT = Path(os.getenv("CALI_CRM_PROJECT_ROOT", "R:/SPRUKED_CRM_MASTER_2026-05-05"))
-ORB_API_URL = os.getenv("ORB_API_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
-ORB_HEALTH_URL = os.getenv("ORB_HEALTH_URL", "http://127.0.0.1:8000/health").rstrip("/")
+# (Removed: now handled by discover_orb_service)
 ORB_ROOT = Path(os.getenv("ORB_DESKTOP_ROOT", "R:/Orb_Assistant_Desktop"))
 ADMIN_ACCESS_TOKEN = os.getenv("CALI_ADMIN_TOKEN", os.getenv("ADMIN_ACCESS_TOKEN", "")).strip()
 

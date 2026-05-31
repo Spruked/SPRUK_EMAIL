@@ -1,5 +1,27 @@
 # Development Log - Pro Prime Series Mail
 
+## 2026-05-31
+
+### Substrate Sync Audit + Runtime Verification
+
+- Performed cross-stack audit with live checks against:
+  - `http://127.0.0.1:19000/api/health`
+  - `http://127.0.0.1:21000/health`
+  - ORB readiness and tool gates (`/api/v1/readiness`, `/api/v1/tools/*`)
+- Confirmed Prime Mail contact CRUD is operating against shared CRM substrate contact rows and not HTTP contact replication.
+- Confirmed test contact parity across Prime Mail + CRM:
+  - `substrate.sync.test+1780199795@example.com`
+  - visible from both apps with same ID/fields.
+- Confirmed ORB guardrails are active:
+  - manifest loaded + valid
+  - write-tool permission controls enforced
+  - blocked-write policy returns explicit reason.
+- Quality issue mitigated during audit:
+  - ORB inbox summary/search now return compact metadata + cleaned preview text, reducing quoted-printable/CSS-heavy payload noise while preserving full-message fetch endpoints.
+- No duplicate ORB contact/message store introduced (scan confirms only authority DB references).
+
+---
+
 ## 2026-05-30
 
 ### Major UI/UX and Architecture Upgrades
