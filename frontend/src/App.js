@@ -1,13 +1,107 @@
 // ============================================
 // PRO PRIME SERIES MAIL - React Frontend
-// Runs locally, connects to your R: drive backend
+// Browser-safe desktop workspace + CRM dossier
 // ============================================
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import './App.css';
 
 const API_BASE = (process.env.REACT_APP_API_BASE || '/api').replace(/\/$/, '');
+
+const FOLDER_GLYPHS = {
+  inbox: '●',
+  sent: '→',
+  starred: '★',
+  archive: '▣',
+  spam: '!',
+  junk: '!',
+  trash: '×',
+  drafts: '✎'
+};
+
+function extractEmail(value = '') {
+  const match = String(value).match(/<([^>]+)>/);
+  if (match?.[1]) return match[1].trim().toLowerCase();
+  const plain = String(value).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return (plain?.[0] || String(value)).trim().toLowerCase();
+}
+
+function displayName(value = '') {
+  const text = String(value).trim();
+  if (!text) return 'Unknown contact';
+  if (text.includes('<')) return text.split('<')[0].replace(/["']/g, '').trim() || extractEmail(text);
+  if (text.includes('@')) return text.split('@')[0].replace(/[._-]+/g, ' ');
+  return text;
+}
+
+function normaliseExtra(extra) {
+  if (!extra) return {};
+  if (typeof extra === 'object') return extra;
+  try {
+    return JSON.parse(extra);
+  } catch {
+    return {};
+  }
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function buildSafeEmailDocument(html = '') {
+  const clean = DOMPurify.sanitize(html, {
+    ADD_ATTR: ['target', 'style', 'class', 'id', 'role', 'aria-label'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus']
+  });
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<base target="_blank" />
+<style>
+  html,body{margin:0;padding:0;background:#fff;color:#111827;font-family:Arial,Helvetica,sans-serif;overflow-wrap:anywhere}
+  body{padding:20px;line-height:1.45}
+  img{max-width:100%;height:auto}
+  table{max-width:100%}
+  a{cursor:pointer}
+</style>
+</head>
+<body>${clean}</body>
+</html>`;
+}
+
+function extractFirstHttpLink(html = '') {
+  if (!html || typeof document === 'undefined') return '';
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const link = Array.from(doc.querySelectorAll('a[href]')).find(anchor => /^https?:/i.test(anchor.href));
+    return link?.href || '';
+  } catch {
+    return '';
+  }
+}
+
+function EmailHtmlFrame({ html }) {
+  const srcDoc = useMemo(() => buildSafeEmailDocument(html), [html]);
+  return (
+    <iframe
+      className="email-html-frame"
+      title="Rendered email"
+      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      referrerPolicy="no-referrer"
+      srcDoc={srcDoc}
+    />
+  );
+}
 
 function App() {
   const [emails, setEmails] = useState([]);
@@ -17,6 +111,7 @@ function App() {
   const [accounts, setAccounts] = useState([]);
   const [currentAccount, setCurrentAccount] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState('desc');
   const [stats, setStats] = useState({});
   const [showCompose, setShowCompose] = useState(false);
   const [composeData, setComposeData] = useState({ from_address: '', to: '', subject: '', text: '' });
@@ -27,6 +122,7 @@ function App() {
   const [showContacts, setShowContacts] = useState(false);
   const [selectedContact, setSelectedContact] = useState(null);
   const [showConnections, setShowConnections] = useState(false);
+  const [showDossier, setShowDossier] = useState(true);
   const [integrationStatus, setIntegrationStatus] = useState(null);
   const [connectionMessage, setConnectionMessage] = useState('');
 
@@ -35,7 +131,20 @@ function App() {
     : currentAccount;
   const inboxFolder = folders.find(folder => folder.folder === 'inbox');
 
-  // Fetch emails
+  const crmUrl = integrationStatus?.crm?.api_url
+    || integrationStatus?.crm_api?.api_url
+    || 'http://127.0.0.1:21000';
+
+  const crmOnline = Boolean(
+    integrationStatus?.crm?.online
+    || integrationStatus?.crm_api?.status === 'ok'
+    || integrationStatus?.crm_db?.status === 'ok'
+  );
+
+  const calendarOnline = integrationStatus?.calendar?.online
+    ?? integrationStatus?.calendar_api?.status === 'ok'
+    ?? crmOnline;
+
   const fetchEmails = useCallback(async () => {
     try {
       const params = new URLSearchParams({ folder: currentFolder, limit: '50' });
@@ -49,7 +158,6 @@ function App() {
     }
   }, [currentFolder, searchQuery, currentAccount]);
 
-  // Fetch folders
   const fetchFolders = useCallback(async () => {
     try {
       const params = new URLSearchParams();
@@ -63,18 +171,15 @@ function App() {
     }
   }, [currentAccount]);
 
-  // Fetch stats
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/stats`);
-      const data = await res.json();
-      setStats(data);
+      setStats(await res.json());
     } catch (err) {
       console.error('Failed to fetch stats:', err);
     }
   }, []);
 
-  // Fetch contacts
   const fetchContacts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/contacts`);
@@ -85,7 +190,6 @@ function App() {
     }
   }, []);
 
-  // Fetch accounts
   const fetchAccounts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/accounts`);
@@ -118,7 +222,6 @@ function App() {
     fetchContacts();
     fetchIntegrations();
 
-    // Auto-refresh every 30 seconds
     const interval = setInterval(() => {
       fetchAccounts();
       fetchEmails();
@@ -129,6 +232,37 @@ function App() {
 
     return () => clearInterval(interval);
   }, [fetchAccounts, fetchEmails, fetchFolders, fetchStats, fetchContacts, fetchIntegrations]);
+
+  const sortedEmails = useMemo(() => {
+    const next = [...emails];
+    next.sort((a, b) => {
+      const aTime = new Date(a.date || 0).getTime();
+      const bTime = new Date(b.date || 0).getTime();
+      return sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+    });
+    return next;
+  }, [emails, sortOrder]);
+
+  const selectedSenderEmail = extractEmail(selectedEmail?.sender || '');
+  const selectedContactFromEmail = useMemo(() => {
+    if (!selectedEmail) return null;
+    const match = contacts.find(contact => extractEmail(contact.email || '') === selectedSenderEmail);
+    if (match) return match;
+    return {
+      name: displayName(selectedEmail.sender),
+      email: selectedSenderEmail,
+      phone: '',
+      address: '',
+      extra: {}
+    };
+  }, [contacts, selectedEmail, selectedSenderEmail]);
+
+  const dossierExtra = normaliseExtra(selectedContactFromEmail?.extra);
+
+  const sanitizedSelectedHtml = selectedEmail?.html_body
+    ? DOMPurify.sanitize(selectedEmail.html_body, { ADD_ATTR: ['target', 'style', 'class', 'id'] })
+    : '';
+  const firstActionLink = useMemo(() => extractFirstHttpLink(sanitizedSelectedHtml), [sanitizedSelectedHtml]);
 
   const changeAccount = (account, folder = currentFolder) => {
     setCurrentAccount(account);
@@ -142,21 +276,20 @@ function App() {
 
   const openCompose = () => {
     const account = selectedAccountAddress;
-    fetch(`${API_BASE}/drafts/${encodeURIComponent(account)}`)
-      .then(res => res.json())
-      .then(draft => {
-        setComposeData(prev => ({
-          from_address: account,
-          to: draft.to || prev.to || '',
-          subject: draft.subject || prev.subject || '',
-          text: draft.text || prev.text || ''
-        }));
-      })
-      .catch(() => {});
-    setComposeData(prev => ({
-      ...prev,
-      from_address: prev.from_address || account
-    }));
+    if (account) {
+      fetch(`${API_BASE}/drafts/${encodeURIComponent(account)}`)
+        .then(res => res.json())
+        .then(draft => {
+          setComposeData(prev => ({
+            from_address: account,
+            to: draft.to || prev.to || '',
+            subject: draft.subject || prev.subject || '',
+            text: draft.text || prev.text || ''
+          }));
+        })
+        .catch(() => {});
+    }
+    setComposeData(prev => ({ ...prev, from_address: prev.from_address || account }));
     setShowCompose(true);
   };
 
@@ -167,12 +300,7 @@ function App() {
       await fetch(`${API_BASE}/drafts/${encodeURIComponent(account)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          account,
-          to: composeData.to,
-          subject: composeData.subject,
-          text: composeData.text
-        })
+        body: JSON.stringify({ account, to: composeData.to, subject: composeData.subject, text: composeData.text })
       });
       setDraftStatus('Draft saved');
     } catch (err) {
@@ -192,9 +320,9 @@ function App() {
       alert('Please provide at least a name or email.');
       return;
     }
-    let payload = { ...contact };
-    // Parse extra JSON if provided
-    if (payload.extra) {
+
+    const payload = { ...contact };
+    if (payload.extra && typeof payload.extra === 'string') {
       try {
         payload.extra = JSON.parse(payload.extra);
       } catch {
@@ -202,26 +330,24 @@ function App() {
         return;
       }
     }
+
     try {
       const res = await fetch(`${API_BASE}/contacts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const error = await res.json().catch(() => ({}));
-        alert(error.detail || 'Failed to save contact');
+        alert(data.detail || 'Failed to save contact');
         return;
       }
       setContactForm({ name: '', email: '', phone: '', address: '', photo: '', extra: '' });
+      setConnectionMessage(data.crm_sync?.status === 'error'
+        ? `Contact saved locally; CRM sync failed: ${data.crm_sync.detail}`
+        : 'Contact saved and available to PRIME MAIL');
       fetchContacts();
       fetchIntegrations();
-      if (res.status === 200) {
-        const data = await res.json().catch(() => ({}));
-        setConnectionMessage(data.crm_sync?.status === 'error'
-          ? `Contact saved locally; CRM sync failed: ${data.crm_sync.detail}`
-          : 'Contact saved');
-      }
     } catch (err) {
       console.error('Failed to save contact:', err);
       alert('Failed to save contact');
@@ -242,6 +368,7 @@ function App() {
         return;
       }
       setConnectionMessage(`CRM sync processed ${data.processed || 0}; linked ${data.linked || 0}; created ${data.created_contacts || 0}`);
+      fetchContacts();
       fetchIntegrations();
     } catch (err) {
       console.error('Failed to sync CRM:', err);
@@ -255,7 +382,14 @@ function App() {
       const res = await fetch(`${API_BASE}/integrations/orb/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: 'status', context: { source: 'spruk_email' } })
+        body: JSON.stringify({
+          prompt: 'status',
+          context: {
+            source: 'prime_mail',
+            selected_email_id: selectedEmail?.id || null,
+            selected_contact: selectedContactFromEmail?.email || null
+          }
+        })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -269,41 +403,37 @@ function App() {
     }
   };
 
-  // Open email
   const openEmail = async (email) => {
     try {
       const res = await fetch(`${API_BASE}/emails/${email.id}`);
       const data = await res.json();
       setSelectedEmail(data);
-      fetchFolders(); // Update unread counts
+      setShowDossier(true);
+      fetchFolders();
       fetchAccounts();
     } catch (err) {
       console.error('Failed to open email:', err);
     }
   };
 
-  // Star email
-  const toggleStar = async (e, emailId) => {
-    e.stopPropagation();
+  const toggleStar = async (event, emailId) => {
+    event.stopPropagation();
     try {
       const email = emails.find(item => item.id === emailId) || selectedEmail;
-      const nextStarred = !Boolean(email?.starred);
       await fetch(`${API_BASE}/emails/${emailId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ starred: nextStarred })
+        body: JSON.stringify({ starred: !Boolean(email?.starred) })
       });
       fetchEmails();
       fetchFolders();
-      fetchAccounts();
     } catch (err) {
       console.error('Failed to star:', err);
     }
   };
 
-  // Archive email
-  const archiveEmail = async (e, emailId) => {
-    e.stopPropagation();
+  const archiveEmail = async (event, emailId) => {
+    event.stopPropagation();
     try {
       await fetch(`${API_BASE}/emails/${emailId}`, {
         method: 'PATCH',
@@ -319,9 +449,8 @@ function App() {
     }
   };
 
-  // Delete email
-  const deleteEmail = async (e, emailId) => {
-    e.stopPropagation();
+  const deleteEmail = async (event, emailId) => {
+    event.stopPropagation();
     try {
       await fetch(`${API_BASE}/emails/${emailId}`, { method: 'DELETE' });
       fetchEmails();
@@ -333,41 +462,38 @@ function App() {
     }
   };
 
-  // Send email
-  const sendEmail = async (e) => {
-    e.preventDefault();
+  const sendEmail = async event => {
+    event.preventDefault();
     try {
-      const payload = {
-        ...composeData,
-        from_address: composeData.from_address || selectedAccountAddress
-      };
+      const payload = { ...composeData, from_address: composeData.from_address || selectedAccountAddress };
       const res = await fetch(`${API_BASE}/emails/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        if (payload.from_address) {
-          await fetch(`${API_BASE}/drafts/${encodeURIComponent(payload.from_address)}`, { method: 'DELETE' });
-        }
-        setShowCompose(false);
-        setComposeData({ from_address: payload.from_address, to: '', subject: '', text: '' });
-        setDraftStatus('');
-        alert('Email sent!');
-      } else {
-        const error = await res.json().catch(() => ({}));
-        alert(error.detail || 'Failed to send email');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.detail || 'Failed to send email');
+        return;
       }
+      if (payload.from_address) {
+        await fetch(`${API_BASE}/drafts/${encodeURIComponent(payload.from_address)}`, { method: 'DELETE' });
+      }
+      setShowCompose(false);
+      setComposeData({ from_address: payload.from_address, to: '', subject: '', text: '' });
+      setDraftStatus('');
+      fetchEmails();
+      alert('Email sent!');
     } catch (err) {
       console.error('Failed to send:', err);
       alert('Failed to send email');
     }
   };
 
-  // Format date
-  const formatDate = (dateStr) => {
+  const formatDate = dateStr => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return String(dateStr);
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
@@ -382,510 +508,419 @@ function App() {
 
   const cleanEmailText = (input = '') => {
     if (!input) return '';
-    const decoded = decodeQuotedPrintable(input);
-    return decoded
+    return decodeQuotedPrintable(input)
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
       .replace(/@media[\s\S]*?\}/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   };
 
-  const sanitizedSelectedHtml = selectedEmail?.html_body
-    ? DOMPurify.sanitize(selectedEmail.html_body)
-    : '';
   const selectedTextBody = cleanEmailText(selectedEmail?.text_body || '');
+
+  const openCrm = (path = '') => {
+    const root = String(crmUrl || '').replace(/\/$/, '');
+    window.open(`${root}${path}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const openDossierPopout = () => {
+    if (!selectedContactFromEmail) return;
+    const contact = selectedContactFromEmail;
+    const extra = normaliseExtra(contact.extra);
+    const popup = window.open('', 'prime_mail_contact_dossier', 'width=520,height=860,resizable=yes,scrollbars=yes');
+    if (!popup) {
+      alert('Pop-up blocked. Allow pop-ups for PRIME MAIL to detach the dossier.');
+      return;
+    }
+
+    popup.document.write(`<!doctype html>
+<html><head><title>${escapeHtml(contact.name || contact.email)} — Contact Dossier</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Segoe UI,Arial,sans-serif}.bar{height:62px;padding:19px 22px;background:#111a2e;border-bottom:1px solid #26344f;font-weight:700;letter-spacing:.08em}.wrap{padding:18px}.card{background:#111a2e;border:1px solid #26344f;border-radius:12px;padding:16px;margin-bottom:14px}.name{font-size:25px;font-weight:750;color:#fff;margin-bottom:4px}.muted{color:#91a2bd;font-size:13px}.tag{display:inline-block;margin-top:10px;padding:5px 9px;border-radius:999px;background:#123a2c;color:#73e5aa;font-size:11px;font-weight:700}.label{font-size:10px;color:#78a6ff;letter-spacing:.1em;margin:18px 2px 8px}.row{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid #1d2a43;font-size:13px}.row:last-child{border-bottom:0}.key{color:#91a2bd}.value{color:#fff;overflow-wrap:anywhere}.footer{font-size:12px;color:#73e5aa;margin-top:16px}</style></head>
+<body><div class="bar">CONTACT DOSSIER · PRIME MAIL</div><div class="wrap">
+<div class="card"><div class="name">${escapeHtml(contact.name || displayName(contact.email))}</div><div class="muted">${escapeHtml(extra.title || '')}${extra.company ? ` · ${escapeHtml(extra.company)}` : ''}</div><span class="tag">${escapeHtml(extra.stage || 'CONTACT')}</span></div>
+<div class="label">CONTACT</div><div class="card"><div class="row"><span class="key">Email</span><span class="value">${escapeHtml(contact.email || '')}</span></div><div class="row"><span class="key">Phone</span><span class="value">${escapeHtml(contact.phone || '—')}</span></div><div class="row"><span class="key">Company</span><span class="value">${escapeHtml(extra.company || '—')}</span></div></div>
+<div class="label">CRM STATUS</div><div class="card"><div class="row"><span class="key">Stage</span><span class="value">${escapeHtml(extra.stage || '—')}</span></div><div class="row"><span class="key">Last contact</span><span class="value">${escapeHtml(extra.last_contact || 'Current email')}</span></div><div class="row"><span class="key">Next action</span><span class="value">${escapeHtml(extra.next_action || '—')}</span></div></div>
+<div class="label">CURRENT CONTEXT</div><div class="card"><div class="row"><span class="key">Email</span><span class="value">${escapeHtml(selectedEmail?.subject || '—')}</span></div><div class="row"><span class="key">Date</span><span class="value">${escapeHtml(formatDate(selectedEmail?.date))}</span></div></div>
+<div class="footer">Mail + CRM context linked through PRIME MAIL</div></div></body></html>`);
+    popup.document.close();
+  };
+
+  const openContactWorkspace = contact => {
+    setSelectedContact(contact || selectedContactFromEmail || null);
+    setShowContacts(true);
+  };
+
+  const replyToSelected = () => {
+    if (!selectedEmail) return;
+    setComposeData({
+      from_address: accounts.some(account => account.email === selectedEmail.recipient)
+        ? selectedEmail.recipient
+        : selectedAccountAddress,
+      to: extractEmail(selectedEmail.sender),
+      subject: `Re: ${selectedEmail.subject || ''}`,
+      text: ''
+    });
+    setShowCompose(true);
+  };
+
+  const renderStatus = (label, ok, detail) => (
+    <div className="connection-status-row" key={label}>
+      <span className={`status-dot ${ok ? 'online' : 'offline'}`} />
+      <span>{label}</span>
+      <strong>{detail || (ok ? 'Connected' : 'Unavailable')}</strong>
+    </div>
+  );
 
   return (
     <div className="app">
-      {/* Header */}
       <header className="header">
         <div className="header-left">
-          <button className="menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
+          <button className="menu-btn" onClick={() => setSidebarOpen(value => !value)} aria-label="Toggle sidebar">☰</button>
           <img className="brand-logo" src="/primemail-logo.png" alt="PRIME MAIL logo" />
-          <h1>PRIME MAIL</h1>
+          <div className="brand-copy">
+            <h1>PRIME MAIL</h1>
+            <span>Pro Prime Series</span>
+          </div>
         </div>
+
         <div className="header-center">
+          <span className="search-icon">⌕</span>
           <input
             type="text"
-            placeholder="Search emails..."
+            placeholder="Search mail, people, attachments..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={event => setSearchQuery(event.target.value)}
             className="search-box"
           />
         </div>
+
         <div className="header-right">
-          <select
-            className="account-select"
-            value={currentAccount}
-            onChange={(e) => changeAccount(e.target.value)}
-          >
+          <select className="account-select" value={currentAccount} onChange={event => changeAccount(event.target.value)}>
             <option value="all">All accounts</option>
-            {accounts.map(account => (
-              <option key={account.email} value={account.email}>{account.email}</option>
-            ))}
+            {accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}
           </select>
-          <button className="compose-btn" onClick={openCompose}>+ Compose</button>
-          <button className="header-btn" onClick={() => setShowContacts(true)}>Contacts</button>
-          <button className="header-btn" onClick={() => { fetchIntegrations(); setShowConnections(true); }}>
-            Connections
-          </button>
-          <div className="stats-badge">
-            {stats.unread_emails > 0 && <span className="unread-dot">{stats.unread_emails}</span>}
-          </div>
+          <button className="compose-btn" onClick={openCompose}>Compose</button>
+          <button className="header-btn" onClick={() => openContactWorkspace(selectedContactFromEmail)}>Contacts</button>
+          <button className="orb-btn" onClick={() => { setShowConnections(true); testOrbConnection(); }}>ORB</button>
+          <button className="header-btn icon-only" onClick={() => { fetchIntegrations(); setShowConnections(true); }} aria-label="Connections">●</button>
         </div>
       </header>
 
-      <div className="main-container">
-        {/* Sidebar */}
+      <div className={`main-container ${sidebarOpen ? '' : 'sidebar-closed'} ${selectedEmail ? 'has-reader' : 'no-reader'} ${selectedEmail && showDossier ? 'has-dossier' : ''}`}>
         {sidebarOpen && (
           <aside className="sidebar">
-            <div className="mailbox-list">
-              <div className="account-panel">
-                <label>Inboxes</label>
-                <strong>{currentAccount === 'all' ? 'All inboxes' : currentAccount}</strong>
+            <button className="sidebar-compose" onClick={openCompose}>+ Compose</button>
+
+            <div className="sidebar-section">
+              <div className="sidebar-label">WORKSPACE</div>
+              <div className="workspace-switcher">
+                <button className="active">Mail</button>
+                <button onClick={() => openCrm('')}>CRM</button>
+                <button onClick={() => openCrm('/calendar')}>Calendar</button>
               </div>
-              <div
-                className={`mailbox-item ${currentAccount === 'all' ? 'active' : ''}`}
-                onClick={() => changeAccount('all', 'inbox')}
-              >
-                <span className="folder-icon">📬</span>
-                <span className="mailbox-name">All inboxes</span>
-                {inboxFolder?.unread > 0 && <span className="folder-unread">{inboxFolder.unread}</span>}
-                <span className="folder-count">{inboxFolder?.count || 0}</span>
-              </div>
-              {accounts.map(account => (
-                <div
-                  key={account.email}
-                  className={`mailbox-item ${currentAccount === account.email ? 'active' : ''}`}
-                  onClick={() => changeAccount(account.email, 'inbox')}
-                >
-                  <span className="folder-icon">📥</span>
-                  <span className="mailbox-name">{account.email}</span>
-                  {account.unread_count > 0 && <span className="folder-unread">{account.unread_count}</span>}
-                  <span className="folder-count">{account.inbox_count || 0}</span>
-                </div>
-              ))}
             </div>
 
-            <div className="folder-list">
-              {folders.map(folder => (
-                <div
-                  key={folder.folder}
-                  className={`folder-item ${currentFolder === folder.folder ? 'active' : ''}`}
-                  onClick={() => { setCurrentFolder(folder.folder); setSelectedEmail(null); }}
-                >
-                  <span className="folder-icon">
-                    {folder.folder === 'inbox' && '📥'}
-                    {folder.folder === 'sent' && '📤'}
-                    {folder.folder === 'starred' && '⭐'}
-                    {folder.folder === 'archive' && '📦'}
-                    {folder.folder === 'trash' && '🗑️'}
-                  </span>
-                  <span className="folder-name">{folder.folder}</span>
-                  {folder.unread > 0 && <span className="folder-unread">{folder.unread}</span>}
-                  <span className="folder-count">{folder.count}</span>
+            <div className="sidebar-section">
+              <div className="sidebar-label">MAILBOX</div>
+              <div className="mailbox-card">
+                <span className="mailbox-dot" />
+                <div>
+                  <strong>{currentAccount === 'all' ? (selectedAccountAddress || 'All accounts') : currentAccount}</strong>
+                  <span>{inboxFolder?.unread || 0} unread · {currentAccount === 'all' ? 'All accounts' : 'Current account'}</span>
                 </div>
-              ))}
+              </div>
             </div>
 
-            <div className="contacts-section">
-              <div className="section-title-row">
-                <h3>Contacts</h3>
-                <button type="button" onClick={() => setShowContacts(true)}>Open</button>
-              </div>
-              <div className="contacts-list compact">
-                {contacts.slice(0, 5).map(contact => (
-                  <div key={contact.email || contact.name} className="contact-item" onClick={() => setShowContacts(true)} style={{cursor:'pointer'}}>
-                    <span className="contact-email">{contact.name || contact.email}</span>
-                  </div>
+            <div className="sidebar-section folders-section">
+              <div className="sidebar-label">FOLDERS</div>
+              <div className="folder-list">
+                {folders.map(folder => (
+                  <button
+                    key={folder.folder}
+                    className={`folder-item ${currentFolder === folder.folder ? 'active' : ''}`}
+                    onClick={() => { setCurrentFolder(folder.folder); setSelectedEmail(null); }}
+                  >
+                    <span className="folder-glyph">{FOLDER_GLYPHS[folder.folder] || '○'}</span>
+                    <span className="folder-name">{folder.folder}</span>
+                    {folder.unread > 0 && <span className="folder-unread">{folder.unread}</span>}
+                    <span className="folder-count">{folder.count}</span>
+                  </button>
                 ))}
-                {contacts.length > 5 && <div className="contact-item more" onClick={() => setShowContacts(true)} style={{cursor:'pointer',fontStyle:'italic'}}>More...</div>}
               </div>
             </div>
 
-            <div className="storage-info">
-              <small>💾 {stats.total_emails || 0} emails stored</small>
-              <small>📁 {stats.storage_path || 'R:/email_client'}</small>
+            <div className="sidebar-section">
+              <div className="sidebar-label">CONTACT</div>
+              <button className="dossier-launch" onClick={() => openContactWorkspace(selectedContactFromEmail)}>
+                <span>Contact dossier</span>
+                <strong>{selectedContactFromEmail?.name || 'Open contacts'}</strong>
+              </button>
+            </div>
+
+            <div className="sidebar-section connected-section">
+              <div className="sidebar-label">CONNECTED</div>
+              <div className="connected-row"><span className={`status-dot ${crmOnline ? 'online' : 'offline'}`} />CRM <em>{crmOnline ? 'Connected' : 'Check'}</em></div>
+              <div className="connected-row"><span className={`status-dot ${calendarOnline ? 'online' : 'offline'}`} />Calendar <em>{calendarOnline ? 'Connected' : 'Check'}</em></div>
+              <div className="connected-row"><span className="status-dot online" />Mail <em>Active</em></div>
+            </div>
+
+            <div className="sidebar-footer">
+              <button onClick={() => setShowConnections(true)}>Settings</button>
+              <span>{stats.total_emails || 0} stored</span>
             </div>
           </aside>
         )}
 
-        {/* Email List */}
-        <main className={`email-list ${selectedEmail ? 'split' : ''}`}>
-          {emails.map(email => (
-            <div
-              key={email.id}
-              className={`email-item ${!email.read ? 'unread' : ''} ${selectedEmail?.id === email.id ? 'selected' : ''}`}
-              onClick={() => openEmail(email)}
-            >
-              <div className="email-row">
-                <span className="email-sender">{email.sender}</span>
-                <span className="email-date">{formatDate(email.date)}</span>
-              </div>
-              <div className="email-recipient">{currentFolder === 'sent' ? `To: ${email.recipient}` : `To: ${email.recipient}`}</div>
-              <div className="email-subject">{email.subject || '(No Subject)'}</div>
-              {currentFolder === 'sent' && (
-                <div className={`email-status ${(email.status || '').toLowerCase()}`}>
-                  {(email.status || 'unknown').toUpperCase()}
-                </div>
-              )}
-              <div className="email-preview">{cleanEmailText(email.text_body || '').substring(0, 100) || ''}...</div>
-              <div className="email-actions">
-                <button onClick={(e) => toggleStar(e, email.id)}>{email.starred ? '★' : '☆'}</button>
-                <button onClick={(e) => archiveEmail(e, email.id)}>📦</button>
-                <button onClick={(e) => deleteEmail(e, email.id)}>🗑️</button>
-              </div>
+        <section className="mail-list-panel">
+          <div className="mail-list-toolbar">
+            <div>
+              <h2>{currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1)}</h2>
+              <span>{emails.length} messages</span>
             </div>
-          ))}
-          {emails.length === 0 && (
-            <div className="empty-state">
-              <p>No emails in {currentFolder}</p>
-              <p className="empty-hint">Emails arrive via Cloudflare → your R: drive</p>
+            <div className="list-controls">
+              <select value={sortOrder} onChange={event => setSortOrder(event.target.value)} aria-label="Sort order">
+                <option value="desc">Newest first</option>
+                <option value="asc">Oldest first</option>
+              </select>
+              <button onClick={fetchEmails} aria-label="Refresh">↻</button>
             </div>
-          )}
-        </main>
+          </div>
 
-        {/* Email Detail */}
-        {selectedEmail && (
-          <aside className="email-detail">
+          <div className="mail-scroll">
+            {sortedEmails.map(email => (
+              <article
+                key={email.id}
+                className={`email-item ${!email.read ? 'unread' : ''} ${selectedEmail?.id === email.id ? 'selected' : ''}`}
+                onClick={() => openEmail(email)}
+              >
+                <div className="email-row">
+                  <span className="email-sender">{displayName(email.sender)}</span>
+                  <span className="email-date">{formatDate(email.date)}</span>
+                </div>
+                <div className="email-subject">{email.subject || '(No Subject)'}</div>
+                <div className="email-preview">{cleanEmailText(email.text_body || '').substring(0, 120) || 'HTML message'}{cleanEmailText(email.text_body || '').length > 120 ? '…' : ''}</div>
+                <div className="email-meta-line">
+                  <span>{currentFolder === 'sent' ? `To ${email.recipient}` : (email.recipient || currentAccount)}</span>
+                  {currentFolder === 'sent' && email.status && <span className={`email-status ${(email.status || '').toLowerCase()}`}>{email.status}</span>}
+                </div>
+                <div className="email-actions">
+                  <button onClick={event => toggleStar(event, email.id)}>{email.starred ? '★' : '☆'}</button>
+                  <button onClick={event => archiveEmail(event, email.id)}>Archive</button>
+                  <button onClick={event => deleteEmail(event, email.id)}>Delete</button>
+                </div>
+              </article>
+            ))}
+            {emails.length === 0 && (
+              <div className="empty-state">
+                <strong>No mail here</strong>
+                <span>PRIME MAIL is connected to {stats.storage_path || 'R:/email_client'}.</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {selectedEmail ? (
+          <section className="email-detail">
             <div className="detail-header">
-              <button className="close-btn" onClick={() => setSelectedEmail(null)}>✕</button>
-              <h2>{selectedEmail.subject || '(No Subject)'}</h2>
+              <div className="detail-title-row">
+                <h2>{selectedEmail.subject || '(No Subject)'}</h2>
+                <button className="close-btn" onClick={() => setSelectedEmail(null)}>×</button>
+              </div>
               <div className="detail-meta">
-                <span><strong>From:</strong> {selectedEmail.sender}</span>
-                <span><strong>To:</strong> {selectedEmail.recipient}</span>
-                <span><strong>Date:</strong> {formatDate(selectedEmail.date)}</span>
-                {selectedEmail.folder === 'sent' && selectedEmail.status && (
-                  <span><strong>Status:</strong> {selectedEmail.status}</span>
-                )}
+                <div><span>From</span><strong>{selectedEmail.sender}</strong></div>
+                <div><span>To</span><strong>{selectedEmail.recipient}</strong></div>
+                <div><span>Date</span><strong>{formatDate(selectedEmail.date)}</strong></div>
+              </div>
+              <div className="detail-context-actions">
+                <button className={showDossier ? 'active' : ''} onClick={() => setShowDossier(value => !value)}>Dossier</button>
+                <button onClick={() => openCrm('')}>Open CRM</button>
+                <button onClick={() => openCrm('/calendar')}>Calendar</button>
               </div>
             </div>
+
+            {firstActionLink && (
+              <div className="action-card">
+                <div>
+                  <strong>Action link detected</strong>
+                  <span>This message contains an external action or verification link.</span>
+                </div>
+                <button onClick={() => window.open(firstActionLink, '_blank', 'noopener,noreferrer')}>Open action →</button>
+              </div>
+            )}
+
             <div className="detail-body">
-              {selectedEmail.html_body ? (
-                <div dangerouslySetInnerHTML={{ __html: sanitizedSelectedHtml }} />
-              ) : (
-                <pre>{selectedTextBody}</pre>
-              )}
+              {selectedEmail.html_body
+                ? <EmailHtmlFrame html={selectedEmail.html_body} />
+                : <pre>{selectedTextBody}</pre>}
             </div>
+
             <div className="detail-actions">
-              <button onClick={() => saveContact({
-                name: selectedEmail.sender?.split('@')[0] || '',
-                email: selectedEmail.sender
-              })}>Add Contact</button>
-              <button onClick={() => {
-                setComposeData({
-                  from_address: accounts.some(account => account.email === selectedEmail.recipient)
-                    ? selectedEmail.recipient
-                    : selectedAccountAddress,
-                  to: selectedEmail.sender,
-                  subject: `Re: ${selectedEmail.subject}`,
-                  text: ''
-                });
-                setShowCompose(true);
-              }}>Reply</button>
+              <button onClick={replyToSelected}>Reply</button>
               <button onClick={() => archiveEmail({ stopPropagation: () => {} }, selectedEmail.id)}>Archive</button>
-              <button onClick={() => deleteEmail({ stopPropagation: () => {} }, selectedEmail.id)}>Delete</button>
+              <button onClick={() => openContactWorkspace(selectedContactFromEmail)}>Contact</button>
+              <button className="danger" onClick={() => deleteEmail({ stopPropagation: () => {} }, selectedEmail.id)}>Delete</button>
+              <span className="render-state">{selectedEmail.html_body ? 'Rendered HTML' : 'Plain text'}</span>
+            </div>
+          </section>
+        ) : (
+          <section className="reader-empty">
+            <div className="reader-empty-mark">P</div>
+            <h2>PRIME MAIL</h2>
+            <p>Select a message to open the reader and its linked contact dossier.</p>
+          </section>
+        )}
+
+        {selectedEmail && showDossier && selectedContactFromEmail && (
+          <aside className="contact-dossier">
+            <div className="dossier-header">
+              <div>
+                <span>CONTACT DOSSIER</span>
+                <small>Mail ↔ CRM context</small>
+              </div>
+              <div>
+                <button onClick={openDossierPopout} title="Pop out dossier">↗</button>
+                <button onClick={() => setShowDossier(false)} title="Close dossier">×</button>
+              </div>
+            </div>
+
+            <div className="dossier-scroll">
+              <div className="dossier-identity">
+                <div className="avatar">{(selectedContactFromEmail.name || selectedContactFromEmail.email || '?').charAt(0).toUpperCase()}</div>
+                <div>
+                  <h3>{selectedContactFromEmail.name || displayName(selectedContactFromEmail.email)}</h3>
+                  <p>{dossierExtra.title || 'Contact'}{dossierExtra.company ? ` · ${dossierExtra.company}` : ''}</p>
+                  <span className="lead-tag">{String(dossierExtra.stage || 'CONTACT').toUpperCase()}</span>
+                </div>
+              </div>
+
+              <div className="dossier-section-title">CONTACT</div>
+              <div className="dossier-card">
+                <div className="dossier-row"><span>Email</span><strong>{selectedContactFromEmail.email || '—'}</strong></div>
+                <div className="dossier-row"><span>Phone</span><strong>{selectedContactFromEmail.phone || '—'}</strong></div>
+                <div className="dossier-row"><span>Company</span><strong>{dossierExtra.company || '—'}</strong></div>
+              </div>
+
+              <div className="dossier-section-title">CRM STATUS</div>
+              <div className="dossier-card">
+                <div className="dossier-row"><span>Pipeline</span><strong>{dossierExtra.stage || '—'}</strong></div>
+                <div className="dossier-row"><span>Last contact</span><strong>{dossierExtra.last_contact || 'Current email'}</strong></div>
+                <div className="dossier-row"><span>Next action</span><strong>{dossierExtra.next_action || '—'}</strong></div>
+              </div>
+
+              <div className="dossier-section-title">CURRENT THREAD</div>
+              <div className="dossier-card thread-card">
+                <strong>{selectedEmail.subject || '(No Subject)'}</strong>
+                <span>{formatDate(selectedEmail.date)}</span>
+                <p>{cleanEmailText(selectedEmail.text_body || '').substring(0, 130) || 'HTML message'}</p>
+              </div>
+
+              <div className="dossier-section-title">QUICK ACTIONS</div>
+              <div className="dossier-actions">
+                <button className="primary" onClick={() => openCrm('')}>Open CRM</button>
+                <button onClick={() => openContactWorkspace(selectedContactFromEmail)}>{contacts.some(contact => extractEmail(contact.email) === selectedSenderEmail) ? 'Update contact' : 'Add contact'}</button>
+                <button onClick={() => openCrm('/calendar')}>Create event</button>
+              </div>
+            </div>
+
+            <div className="dossier-footer">
+              <span className={`status-dot ${crmOnline ? 'online' : 'offline'}`} />
+              <span>Mail + CRM + Calendar</span>
+              <strong>{crmOnline ? 'LINKED' : 'CHECK CRM'}</strong>
             </div>
           </aside>
         )}
       </div>
 
-      {/* Compose Modal */}
       {showCompose && (
         <div className="modal-overlay">
           <div className="compose-modal">
-            <div className="brand-strip">
-              <img className="brand-logo" src="/primemail-logo.png" alt="PRIME MAIL logo" />
-              <strong>PRIME MAIL</strong>
+            <div className="modal-header">
+              <div><span className="eyebrow">PRIME MAIL</span><h2>Compose</h2></div>
+              <button className="close-btn" onClick={() => { saveDraft(); setShowCompose(false); }}>×</button>
             </div>
-            <h2>Compose Email</h2>
             <form onSubmit={sendEmail}>
-              <select
-                value={composeData.from_address || selectedAccountAddress}
-                onChange={(e) => setComposeData({...composeData, from_address: e.target.value})}
-                required
-              >
-                {accounts.map(account => (
-                  <option key={account.email} value={account.email}>{account.email}</option>
-                ))}
+              <label>From</label>
+              <select value={composeData.from_address || selectedAccountAddress} onChange={event => setComposeData({ ...composeData, from_address: event.target.value })} required>
+                {accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}
               </select>
-              <input
-                type="email"
-                placeholder="To"
-                value={composeData.to}
-                onChange={(e) => setComposeData({...composeData, to: e.target.value})}
-                required
-              />
-              <input
-                type="text"
-                placeholder="Subject"
-                value={composeData.subject}
-                onChange={(e) => setComposeData({...composeData, subject: e.target.value})}
-                required
-              />
-              <textarea
-                placeholder="Message..."
-                rows={10}
-                value={composeData.text}
-                onChange={(e) => setComposeData({...composeData, text: e.target.value})}
-                required
-              />
+              <label>To</label>
+              <input type="email" value={composeData.to} onChange={event => setComposeData({ ...composeData, to: event.target.value })} required />
+              <label>Subject</label>
+              <input type="text" value={composeData.subject} onChange={event => setComposeData({ ...composeData, subject: event.target.value })} required />
+              <textarea rows={12} placeholder="Message..." value={composeData.text} onChange={event => setComposeData({ ...composeData, text: event.target.value })} required />
               <div className="compose-actions">
                 <span className="draft-status">{draftStatus}</span>
-                <button type="button" onClick={saveDraft}>Save Draft</button>
-                <button type="submit">Send</button>
+                <button type="button" onClick={saveDraft}>Save draft</button>
                 <button type="button" onClick={() => { saveDraft(); setShowCompose(false); }}>Cancel</button>
+                <button className="primary" type="submit">Send</button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {showConnections && (
-        <div className="modal-overlay">
-          <div className="connections-modal">
-            <div className="modal-header">
-              <h2>Connections & Status</h2>
-              <button className="close-btn" onClick={() => setShowConnections(false)}>x</button>
-            </div>
-            <div className="connections-status-list">
-              {integrationStatus ? (
-                <>
-                  <div className="status-row">
-                    <span className="status-label">Prime Mail API</span>
-                    <span className={`status-indicator ${integrationStatus.primemail_api?.status === 'ok' ? 'ok' : 'error'}`}>{integrationStatus.primemail_api?.status || 'unknown'}</span>
-                  </div>
-                  <div className="status-row">
-                    <span className="status-label">CALI CRM API</span>
-                    <span className={`status-indicator ${integrationStatus.crm_api?.status === 'ok' ? 'ok' : 'error'}`}>{integrationStatus.crm_api?.status || 'unknown'}</span>
-                  </div>
-                  <div className="status-row">
-                    <span className="status-label">Desktop ORB API</span>
-                    <span className={`status-indicator ${integrationStatus.orb_api?.status === 'ok' ? 'ok' : 'error'}`}>{integrationStatus.orb_api?.status || 'unknown'}</span>
-                  </div>
-                  <div className="status-row">
-                    <span className="status-label">CRM DB</span>
-                    <span className={`status-indicator ${integrationStatus.crm_db?.status === 'ok' ? 'ok' : 'error'}`}>{integrationStatus.crm_db?.status || 'unknown'}</span>
-                  </div>
-                  <div className="status-row">
-                    <span className="status-label">Email DB</span>
-                    <span className={`status-indicator ${integrationStatus.email_db?.status === 'ok' ? 'ok' : 'error'}`}>{integrationStatus.email_db?.status || 'unknown'}</span>
-                  </div>
-                  <div className="status-row">
-                    <span className="status-label">Mesh/API Manifest</span>
-                    <span className={`status-indicator ${integrationStatus.mesh_manifest?.status === 'ok' ? 'ok' : 'error'}`}>{integrationStatus.mesh_manifest?.status || 'unknown'}</span>
-                  </div>
-                </>
-              ) : (
-                <div>Loading status...</div>
-              )}
-            </div>
-            <div className="connections-actions">
-              <button onClick={fetchIntegrations}>Refresh Status</button>
-              <button onClick={testOrbConnection}>Test ORB</button>
-              <button onClick={syncEmailToCrm}>Sync Email to CRM</button>
-            </div>
-            <div className="connections-message">
-              {connectionMessage && <span>{connectionMessage}</span>}
-            </div>
-            <div className="ask-orb-panel">
-              <h3>Ask ORB (Assistant)</h3>
-              <input type="text" placeholder="Type a question for ORB... (coming soon)" disabled style={{width:'100%'}} />
-            </div>
           </div>
         </div>
       )}
 
       {showContacts && (
         <div className="modal-overlay">
-          <div className="contacts-modal">
-            <div className="modal-header">
-              <h2>Contacts</h2>
-              <button className="close-btn" onClick={() => { setShowContacts(false); setSelectedContact(null); }}>x</button>
+          <div className="contacts-modal dossier-modal">
+            <div className="modal-header dark">
+              <div><span className="eyebrow">CALI CRM LANGUAGE</span><h2>Contact Dossiers</h2></div>
+              <button className="close-btn" onClick={() => { setShowContacts(false); setSelectedContact(null); }}>×</button>
             </div>
             <div className="contacts-workspace">
               <div className="contacts-list-panel">
                 <div className="contacts-list-header">
-                  <strong>All Contacts</strong>
-                  <button onClick={() => setSelectedContact({ name: '', email: '', phone: '', address: '', photo: '', extra: '' })}>+ Add</button>
+                  <strong>Contacts</strong>
+                  <button onClick={() => setSelectedContact({ name: '', email: '', phone: '', address: '', photo: '', extra: {} })}>+ Add</button>
                 </div>
                 <div className="contacts-list-full">
-                  {contacts.length === 0 && <div className="empty">No contacts found.</div>}
                   {contacts.map(contact => (
-                    <div
+                    <button
                       key={contact.email || contact.name}
-                      className={`contact-list-item${selectedContact && (selectedContact.email === contact.email) ? ' selected' : ''}`}
+                      className={`contact-list-item ${selectedContact?.email === contact.email ? 'selected' : ''}`}
                       onClick={() => setSelectedContact(contact)}
                     >
-                      {contact.photo && <img src={contact.photo} alt="contact" className="contact-photo" style={{width:28,height:28,borderRadius:'50%',objectFit:'cover',marginRight:8}} />}
-                      <span className="contact-name">{contact.name || contact.email}</span>
-                      <span className="contact-email">{contact.email}</span>
-                      {contact.email_count > 0 && <span className="contact-badge">{contact.email_count}</span>}
-                    </div>
+                      <span className="mini-avatar">{(contact.name || contact.email || '?').charAt(0).toUpperCase()}</span>
+                      <span><strong>{contact.name || displayName(contact.email)}</strong><small>{contact.email}</small></span>
+                      {contact.email_count > 0 && <em>{contact.email_count}</em>}
+                    </button>
                   ))}
+                  {contacts.length === 0 && <div className="empty-state small">No contacts saved yet.</div>}
                 </div>
               </div>
+
               <div className="contact-detail-panel">
                 {selectedContact ? (
-                  <div className="contact-detail">
-                    <h3>{selectedContact.name || selectedContact.email || 'New Contact'}</h3>
-                    {selectedContact.photo && <img src={selectedContact.photo} alt="contact" className="contact-photo-large" style={{width:64,height:64,borderRadius:'50%',objectFit:'cover',marginBottom:8}} />}
-                    <form
-                      className="contact-detail-form"
-                      onSubmit={e => { e.preventDefault(); saveContact(selectedContact); }}
-                    >
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={selectedContact.name || ''}
-                        onChange={e => setSelectedContact({ ...selectedContact, name: e.target.value })}
-                      />
-                      <input
-                        type="email"
-                        placeholder="Email"
-                        value={selectedContact.email || ''}
-                        onChange={e => setSelectedContact({ ...selectedContact, email: e.target.value })}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Phone"
-                        value={selectedContact.phone || ''}
-                        onChange={e => setSelectedContact({ ...selectedContact, phone: e.target.value })}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Address"
-                        value={selectedContact.address || ''}
-                        onChange={e => setSelectedContact({ ...selectedContact, address: e.target.value })}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Photo URL or base64"
-                        value={selectedContact.photo || ''}
-                        onChange={e => setSelectedContact({ ...selectedContact, photo: e.target.value })}
-                      />
-                      <textarea
-                        placeholder="Extra fields (JSON)"
-                        value={typeof selectedContact.extra === 'string' ? selectedContact.extra : JSON.stringify(selectedContact.extra || {}, null, 2)}
-                        onChange={e => setSelectedContact({ ...selectedContact, extra: e.target.value })}
-                        rows={2}
-                      />
-                      <div className="contact-detail-actions">
-                        <button type="submit">Save</button>
-                        <button type="button" onClick={() => setSelectedContact(null)}>Cancel</button>
-                      </div>
-                    </form>
-                    {selectedContact.email && (
-                      <div className="linked-emails-panel">
-                        <h4>Linked Emails</h4>
-                        <div className="linked-emails-list">
-                          {emails.filter(email => email.sender === selectedContact.email || email.recipient === selectedContact.email).length === 0 && (
-                            <div className="empty">No emails linked to this contact.</div>
-                          )}
-                          {emails.filter(email => email.sender === selectedContact.email || email.recipient === selectedContact.email).map(email => (
-                            <div key={email.id} className="linked-email-item" onClick={() => { setShowContacts(false); setSelectedEmail(email); }}>
-                              <span className="linked-email-subject">{email.subject || '(No Subject)'}</span>
-                              <span className="linked-email-date">{formatDate(email.date)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <form className="contact-detail-form" onSubmit={event => { event.preventDefault(); saveContact(selectedContact); }}>
+                    <div className="contact-detail-heading">
+                      <div className="avatar large">{(selectedContact.name || selectedContact.email || '?').charAt(0).toUpperCase()}</div>
+                      <div><h3>{selectedContact.name || selectedContact.email || 'New contact'}</h3><span>PRIME MAIL / CALI CRM shared dossier</span></div>
+                    </div>
+                    <label>Name</label>
+                    <input value={selectedContact.name || ''} onChange={event => setSelectedContact({ ...selectedContact, name: event.target.value })} />
+                    <label>Email</label>
+                    <input type="email" value={selectedContact.email || ''} onChange={event => setSelectedContact({ ...selectedContact, email: event.target.value })} />
+                    <div className="form-grid-2">
+                      <div><label>Phone</label><input value={selectedContact.phone || ''} onChange={event => setSelectedContact({ ...selectedContact, phone: event.target.value })} /></div>
+                      <div><label>Address</label><input value={selectedContact.address || ''} onChange={event => setSelectedContact({ ...selectedContact, address: event.target.value })} /></div>
+                    </div>
+                    <label>CRM fields / dossier metadata (JSON)</label>
+                    <textarea rows={7} value={typeof selectedContact.extra === 'string' ? selectedContact.extra : JSON.stringify(selectedContact.extra || {}, null, 2)} onChange={event => setSelectedContact({ ...selectedContact, extra: event.target.value })} />
+                    <div className="contact-detail-actions">
+                      <button type="button" onClick={() => openCrm('')}>Open in CRM</button>
+                      <button type="button" onClick={() => openCrm('/calendar')}>Calendar</button>
+                      <button className="primary" type="submit">Save dossier</button>
+                    </div>
+                  </form>
                 ) : (
-                  <div className="contact-detail-empty">Select a contact to view details.</div>
+                  <div className="contact-detail-empty">
+                    <strong>Select a contact</strong>
+                    <span>The same dossier pattern will be used by CALI CRM.</span>
+                  </div>
                 )}
               </div>
             </div>
-          </div>
-        </div>
-            </div>
-            <form
-              className="contact-form large"
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveContact();
-              }}
-            >
-              <input
-                type="text"
-                placeholder="Name"
-                value={contactForm.name}
-                onChange={(e) => setContactForm({...contactForm, name: e.target.value})}
-              />
-              <input
-                type="email"
-                placeholder="email@example.com"
-                value={contactForm.email}
-                onChange={(e) => setContactForm({...contactForm, email: e.target.value})}
-              />
-              <input
-                type="text"
-                placeholder="Phone"
-                value={contactForm.phone}
-                onChange={(e) => setContactForm({...contactForm, phone: e.target.value})}
-              />
-              <input
-                type="text"
-                placeholder="Address"
-                value={contactForm.address}
-                onChange={(e) => setContactForm({...contactForm, address: e.target.value})}
-              />
-              <input
-                type="text"
-                placeholder="Photo URL or base64"
-                value={contactForm.photo}
-                onChange={(e) => setContactForm({...contactForm, photo: e.target.value})}
-              />
-              <textarea
-                placeholder="Extra fields (JSON)"
-                value={contactForm.extra}
-                onChange={(e) => setContactForm({...contactForm, extra: e.target.value})}
-                rows={2}
-              />
-              <button type="submit">Add Contact</button>
-            </form>
-            {connectionMessage && <div className="status-line">{connectionMessage}</div>}
-            <div className="contacts-table">
-              {contacts.map(contact => (
-                <div key={contact.email || contact.name} className="contact-row" onClick={() => setSelectedContact(contact)} style={{cursor:'pointer'}}>
-                  <div>
-                    {contact.photo && <img src={contact.photo} alt="contact" className="contact-photo" style={{width:32,height:32,borderRadius:'50%',objectFit:'cover',marginRight:8}} />}
-                    <strong>{contact.name || contact.email}</strong>
-                    <span>{contact.email || <em>No email</em>}</span>
-                    {contact.phone && <span className="contact-phone">{contact.phone}</span>}
-                    {contact.address && <span className="contact-address">{contact.address}</span>}
-                    {contact.extra && typeof contact.extra === 'object' && Object.keys(contact.extra).length > 0 && (
-                      <span className="contact-extra">{Object.entries(contact.extra).map(([k,v]) => `${k}: ${v}`).join(', ')}</span>
-                    )}
-                  </div>
-                  <span>{contact.email_count || 0}</span>
-                </div>
-              ))}
-                    {/* Contact Detail Modal */}
-                    {selectedContact && (
-                      <div className="modal-overlay">
-                        <div className="contacts-modal">
-                          <div className="modal-header">
-                            <h2>Contact Details</h2>
-                            <button className="close-btn" onClick={() => setSelectedContact(null)}>x</button>
-                          </div>
-                          <div className="contact-detail-body">
-                            {selectedContact.photo && <img src={selectedContact.photo} alt="contact" style={{width:64,height:64,borderRadius:'50%',objectFit:'cover',marginBottom:8}} />}
-                            <div><strong>Name:</strong> {selectedContact.name || <em>(none)</em>}</div>
-                            <div><strong>Email:</strong> {selectedContact.email || <em>(none)</em>}</div>
-                            <div><strong>Phone:</strong> {selectedContact.phone || <em>(none)</em>}</div>
-                            <div><strong>Address:</strong> {selectedContact.address || <em>(none)</em>}</div>
-                            <div><strong>Email Count:</strong> {selectedContact.email_count || 0}</div>
-                            {selectedContact.extra && typeof selectedContact.extra === 'object' && Object.keys(selectedContact.extra).length > 0 && (
-                              <div><strong>Extra:</strong> <pre style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(selectedContact.extra, null, 2)}</pre></div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-              {contacts.length === 0 && <div className="empty-state small">No contacts saved yet</div>}
-            </div>
+            {connectionMessage && <div className="modal-status-line">{connectionMessage}</div>}
           </div>
         </div>
       )}
@@ -893,35 +928,23 @@ function App() {
       {showConnections && (
         <div className="modal-overlay">
           <div className="connections-modal">
-            <div className="modal-header">
-              <h2>Connections</h2>
-              <button className="close-btn" onClick={() => setShowConnections(false)}>x</button>
+            <div className="modal-header dark">
+              <div><span className="eyebrow">PRO PRIME SYSTEM</span><h2>Connections</h2></div>
+              <button className="close-btn" onClick={() => setShowConnections(false)}>×</button>
             </div>
-            <div className="connection-grid">
-              <div className="connection-panel">
-                <img className="panel-logo" src="/primemail-logo.png" alt="PRIME MAIL logo" />
-                <h3>Pro Prime Series Mail</h3>
-                <span className="connection-state online">Online</span>
-                <p>{integrationStatus?.email_api?.accounts?.length || accounts.length} inboxes on port {integrationStatus?.email_api?.port || '19000'}</p>
-              </div>
-              <div className="connection-panel">
-                <h3>CRM</h3>
-                <span className={`connection-state ${integrationStatus?.crm?.online ? 'online' : 'offline'}`}>
-                  {integrationStatus?.crm?.online ? 'Online' : 'Offline'}
-                </span>
-                <p>{integrationStatus?.crm?.api_url || 'http://127.0.0.1:21000'}</p>
-                <button type="button" onClick={syncEmailToCrm}>Sync Inbox to CRM</button>
-              </div>
-              <div className="connection-panel">
-                <h3>Desktop ORB</h3>
-                <span className={`connection-state ${integrationStatus?.orb?.online ? 'online' : 'offline'}`}>
-                  {integrationStatus?.orb?.online ? 'Online' : 'Offline'}
-                </span>
-                <p>{integrationStatus?.orb?.api_url || 'Unknown (not configured)'}</p>
-                <button type="button" onClick={testOrbConnection}>Test ORB</button>
-              </div>
+            <div className="connection-status-list">
+              {renderStatus('PRIME MAIL', true, `${accounts.length} accounts`)}
+              {renderStatus('CALI CRM', crmOnline, crmOnline ? 'Connected' : crmUrl)}
+              {renderStatus('Calendar', Boolean(calendarOnline), calendarOnline ? 'Available through CRM' : 'Check CRM')}
+              {renderStatus('Desktop ORB', Boolean(integrationStatus?.orb?.online || integrationStatus?.orb_api?.status === 'ok'), integrationStatus?.orb?.online ? 'Connected' : 'Check runtime')}
+              {renderStatus('R: substrate', Boolean(integrationStatus?.email_db?.status === 'ok' || stats.storage_path), stats.storage_path || 'R:/email_client')}
             </div>
-            {connectionMessage && <div className="status-line">{connectionMessage}</div>}
+            <div className="connections-actions">
+              <button onClick={fetchIntegrations}>Refresh</button>
+              <button onClick={syncEmailToCrm}>Sync Email → CRM</button>
+              <button className="orb-btn" onClick={testOrbConnection}>Test ORB</button>
+            </div>
+            {connectionMessage && <div className="modal-status-line">{connectionMessage}</div>}
           </div>
         </div>
       )}
