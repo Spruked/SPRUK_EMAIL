@@ -1,5 +1,5 @@
 @echo off
 cd backend
 call venv\Scripts\activate
-python main.py
+python app.py
 pause
