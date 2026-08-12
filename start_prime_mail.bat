@@ -34,6 +34,16 @@ if not exist "%FIRST_RUN_FLAG%" (
   if errorlevel 1 exit /b 1
 )
 
+rem Always re-register the CURRENT client location. This prevents an old R:\email_client
+rem shortcut or autostart entry from surviving after the client moves to C:\dev\Desktop\PLATFORM.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\prime_mail_register_current_location.ps1" ^
+  -ShortcutPath "%DESKTOP_SHORTCUT%" ^
+  -LauncherPath "%LAUNCHER_PATH%" ^
+  -IconPath "%ICON_PATH%" ^
+  -RunKeyPath "%RUN_KEY_PATH%" ^
+  -RunKeyName "%RUN_KEY_NAME%"
+if errorlevel 1 exit /b 1
+
 if exist "%DESKTOP_SHORTCUT%" (
   echo Shortcut verification: OK - "%DESKTOP_SHORTCUT%"
 ) else (
