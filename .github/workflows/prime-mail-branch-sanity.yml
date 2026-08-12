@@ -20,6 +20,8 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Check Cloudflare Worker syntax
+        run: node --check worker/index.js
 
   python-syntax:
     runs-on: ubuntu-latest
@@ -29,4 +31,4 @@ jobs:
         with:
           python-version: '3.12'
       - name: Compile PRIME MAIL backend
-        run: python -m py_compile backend/main.py backend/registry_routes.py backend/app.py
+        run: python -m py_compile backend/main.py backend/registry_routes.py backend/custody_routes.py backend/app.py
