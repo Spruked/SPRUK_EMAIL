@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 import sqlite3
 import json
 import hashlib
@@ -244,6 +244,68 @@ def cloudflare_error_detail(response: httpx.Response) -> str:
             for err in errors
         )
     return json.dumps(body)
+
+def html_to_plain_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", value)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p\s*>", "\n\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html_escape.unescape(re.sub(r"[ \t\r\f\v]+", " ", text)).strip()
+
+def parse_recipient_addresses(value: str) -> list[str]:
+    addresses = []
+    seen = set()
+    for _name, address in getaddresses([str(value or "")]):
+        normalized = normalize_email(address)
+        if normalized and "@" in normalized and normalized not in seen:
+            seen.add(normalized)
+            addresses.append(normalized)
+    if not addresses:
+        normalized = normalize_email(value)
+        if normalized and "@" in normalized:
+            addresses.append(normalized)
+    return addresses
+
+def cloudflare_delivery_status(status_code: int, payload: Dict[str, Any]) -> tuple[str, str]:
+    if not 200 <= status_code < 300:
+        return "failed", "HTTP error"
+    if payload and payload.get("success") is False:
+        return "failed", "Cloudflare returned success=false"
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if isinstance(result, dict):
+        delivered = result.get("delivered") or []
+        queued = result.get("queued") or []
+        bounced = result.get("permanent_bounces") or []
+        if bounced and not (delivered or queued):
+            return "failed", "All recipients bounced"
+        if delivered or queued:
+            return "sent", "Delivered or queued"
+    return "sent", "Accepted by Cloudflare"
+
+def record_sent_email(
+    *,
+    message_id: str,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    status: str,
+    cloudflare_response: str,
+) -> None:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO sent_emails (message_id, from_addr, to_addr, subject, text_body, html_body, sent_at, status, cloudflare_response)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        message_id, from_addr, to_addr, subject, text_body, html_body,
+        datetime.now().isoformat(), status, cloudflare_response
+    ))
+    conn.commit()
+    conn.close()
 
 def clean_thread_subject(subject: Optional[str]) -> str:
     clean_subject = subject or ""
@@ -575,11 +637,13 @@ async def get_emails(
     search_scope: str = "all",
     unread_only: bool = False,
     account: Optional[str] = None,
-    threaded: bool = False
+    threaded: bool = False,
+    order: str = "desc"
 ):
     conn = get_db()
     c = conn.cursor()
     selected_account = require_configured_account(account)
+    order_sql = "ASC" if str(order).lower() == "asc" else "DESC"
 
     if folder == "sent":
         default_sender = default_account_address()
@@ -625,7 +689,7 @@ async def get_emails(
             count_query += " AND (subject LIKE ? OR to_addr LIKE ? OR text_body LIKE ?)"
             count_params.extend([search_term, search_term, search_term])
 
-        query += " ORDER BY sent_at DESC LIMIT ? OFFSET ?"
+        query += f" ORDER BY sent_at {order_sql} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         c.execute(query, params)
         rows = c.fetchall()
@@ -662,7 +726,7 @@ async def get_emails(
         params.append(fts_query(search, search_scope))
 
     where_sql = " AND ".join(where_clauses)
-    query = f"{select_clause} WHERE {where_sql} ORDER BY emails.date DESC LIMIT ? OFFSET ?"
+    query = f"{select_clause} WHERE {where_sql} ORDER BY emails.date {order_sql} LIMIT ? OFFSET ?"
     c.execute(query, params + [limit, offset])
     rows = c.fetchall()
     emails = [dict(row) for row in rows]
@@ -1055,36 +1119,60 @@ async def send_email(req: SendEmailRequest):
     if (not has_token_auth and not has_key_auth) or not CLOUDFLARE_ACCOUNT_ID:
         raise HTTPException(status_code=500, detail="Cloudflare API not configured")
     from_addr = require_configured_account(req.from_address) or default_account_address()
+    recipients = parse_recipient_addresses(req.to)
+    if not recipients:
+        raise HTTPException(status_code=400, detail="At least one valid recipient is required")
+    message_id = f"sent_{datetime.now().timestamp()}"
+    text_body = req.text or html_to_plain_text(req.html) or ""
+    html_body = sanitize_html(req.html or text_to_html(text_body))
     payload = {
-        "to": req.to,
+        "to": recipients[0] if len(recipients) == 1 else recipients,
         "from": {"address": from_addr, "name": req.from_name},
         "subject": req.subject,
-        "text": req.text or "",
-        "html": sanitize_html(req.html or text_to_html(req.text or ""))
+        "text": text_body,
+        "html": html_body
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/email/sending/send",
-            headers=cloudflare_headers(),
-            json=payload,
-            timeout=30
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/email/sending/send",
+                headers=cloudflare_headers(),
+                json=payload,
+                timeout=30
+            )
+    except Exception as exc:
+        record_sent_email(
+            message_id=message_id,
+            from_addr=from_addr,
+            to_addr=", ".join(recipients),
+            subject=req.subject,
+            text_body=text_body,
+            html_body=html_body,
+            status="failed",
+            cloudflare_response=f"request_error: {exc}",
         )
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO sent_emails (message_id, from_addr, to_addr, subject, text_body, html_body, sent_at, status, cloudflare_response)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        f"sent_{datetime.now().timestamp()}", from_addr, req.to, req.subject, req.text, payload["html"],
-        datetime.now().isoformat(),
-        "sent" if response.status_code == 200 else "failed",
-        response.text
-    ))
-    conn.commit()
-    conn.close()
-    if not 200 <= response.status_code < 300:
-        raise HTTPException(status_code=response.status_code, detail=f"Failed to send: {cloudflare_error_detail(response)}")
-    return {"status": "sent", "to": req.to}
+        raise HTTPException(status_code=502, detail=f"Failed to send: {exc}") from exc
+
+    try:
+        response_payload = response.json()
+    except ValueError:
+        response_payload = {}
+
+    status, _reason = cloudflare_delivery_status(response.status_code, response_payload)
+    record_sent_email(
+        message_id=message_id,
+        from_addr=from_addr,
+        to_addr=", ".join(recipients),
+        subject=req.subject,
+        text_body=text_body,
+        html_body=html_body,
+        status=status,
+        cloudflare_response=response.text,
+    )
+    if status != "sent":
+        detail = cloudflare_error_detail(response) if not 200 <= response.status_code < 300 else json.dumps(response_payload)
+        raise HTTPException(status_code=response.status_code if response.status_code >= 400 else 502, detail=f"Failed to send: {detail}")
+    return {"status": "sent", "to": recipients, "cloudflare": response_payload.get("result") if isinstance(response_payload, dict) else None}
 
 @app.get("/api/drafts/{account}")
 async def get_draft(account: str):

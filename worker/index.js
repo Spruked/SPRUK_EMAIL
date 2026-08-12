@@ -120,6 +120,14 @@ function decodeBody(body, headers) {
   return body;
 }
 
+function repairHtmlQuotedPrintableArtifacts(html = '') {
+  return String(html || '')
+    .replace(/\b(href|src|action)\s*=\s*3D(["'])/gi, '$1=$2')
+    .replace(/\b(href|src|action)\s*=\s*3D(&quot;|&#34;)/gi, '$1=$2')
+    .replace(/\b(href|src)\s*=\s*(["'])3D\2(https?:\/\/[^"'\s>]+)/gi, '$1=$2$3$2')
+    .replace(/\b(href|src)\s*=\s*(["'])3D(https?:\/\/[^"'\s>]+)\2/gi, '$1=$2$3$2');
+}
+
 function splitMultipart(body = '', boundary = '') {
   if (!boundary) return [];
   const normalized = body.replace(/\r\n/g, '\n');
@@ -164,7 +172,7 @@ function parseMimeEntity(raw = '', depth = 0) {
   const decoded = decodeBody(body, headers).trim();
   if (!decoded) return { textParts: [], htmlParts: [] };
 
-  if (contentType.type === 'text/html') return { textParts: [], htmlParts: [decoded] };
+  if (contentType.type === 'text/html') return { textParts: [], htmlParts: [repairHtmlQuotedPrintableArtifacts(decoded)] };
   if (contentType.type === 'text/plain') return { textParts: [decoded], htmlParts: [] };
 
   return { textParts: [], htmlParts: [] };

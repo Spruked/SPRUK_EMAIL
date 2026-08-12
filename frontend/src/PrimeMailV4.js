@@ -15,6 +15,21 @@ const BUSINESS_OPTIONS = [
 ];
 
 const DEFAULT_FOLDERS = ['inbox', 'drafts', 'sent', 'starred', 'archive', 'spam', 'trash'];
+const FOLDER_LABELS = {
+  inbox: 'Signal Feed',
+  drafts: 'Draft Holds',
+  sent: 'Transmissions',
+  starred: 'Star Marks',
+  archive: 'Archive Custody',
+  spam: 'Quarantine',
+  trash: 'Tombstones',
+  snoozed: 'Deferred Signals'
+};
+
+function folderLabel(name = '') {
+  const key = String(name || '').toLowerCase();
+  return FOLDER_LABELS[key] || key.replace(/(^|_)([a-z])/g, (_match, lead, char) => `${lead ? ' ' : ''}${char.toUpperCase()}`);
+}
 
 function extractEmail(value = '') {
   const match = String(value).match(/<([^>]+)>/);
@@ -38,12 +53,42 @@ function initials(value = '') {
 }
 
 function cleanText(value = '') {
-  return String(value || '')
+  return decodeQuotedPrintableArtifacts(value)
     .replace(/=\r?\n/g, '')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function decodeQuotedPrintableArtifacts(value = '') {
+  const input = String(value || '');
+  if (!/(=\r?\n|=[0-9A-Fa-f]{2})/.test(input)) return input;
+  const source = input.replace(/=\r?\n/g, '');
+  const bytes = [];
+  const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === '=' && /^[0-9A-Fa-f]{2}$/.test(source.slice(index + 1, index + 3))) {
+      bytes.push(Number.parseInt(source.slice(index + 1, index + 3), 16));
+      index += 2;
+      continue;
+    }
+    if (encoder) bytes.push(...encoder.encode(source[index]));
+    else bytes.push(source.charCodeAt(index));
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+  } catch {
+    return source.replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+  }
+}
+
+function normalizeEmailHtml(html = '') {
+  return decodeQuotedPrintableArtifacts(html)
+    .replace(/\b(href|src|action)\s*=\s*3D(["'])/gi, '$1=$2')
+    .replace(/\b(href|src|action)\s*=\s*3D(&quot;|&#34;)/gi, '$1=$2')
+    .replace(/\b(href|src)\s*=\s*(["'])3D\2(https?:\/\/[^"'\s>]+)/gi, '$1=$2$3$2')
+    .replace(/\b(href|src)\s*=\s*(["'])3D(https?:\/\/[^"'\s>]+)\2/gi, '$1=$2$3$2');
 }
 
 function formatDate(value, compact = false) {
@@ -55,19 +100,19 @@ function formatDate(value, compact = false) {
 }
 
 function safeHtmlDocument(html = '') {
-  const clean = DOMPurify.sanitize(html, {
-    ADD_ATTR: ['target', 'style', 'class', 'id', 'role', 'aria-label'],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select'],
+  const clean = DOMPurify.sanitize(normalizeEmailHtml(html), {
+    ADD_ATTR: ['target', 'rel', 'style', 'class', 'id', 'role', 'aria-label', 'type'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus']
   });
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>html,body{margin:0;padding:0;background:#fff;color:#111827;font-family:Inter,Segoe UI,Arial,sans-serif;overflow-wrap:anywhere}body{padding:22px;line-height:1.48}img{max-width:100%;height:auto}table{max-width:100%}a{cursor:pointer;color:#2563eb}</style></head><body>${clean}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>html,body{margin:0;padding:0;background:#fff;color:#111827;font-family:Inter,Segoe UI,Arial,sans-serif;overflow-wrap:anywhere}body{padding:22px;line-height:1.48}img{max-width:100%;height:auto}table{max-width:100%}a{cursor:pointer;color:#2563eb}a[style],button[style]{max-width:100%}button{font:inherit}</style></head><body>${clean}</body></html>`;
 }
 
 function firstHttpLink(html = '') {
   if (!html || typeof document === 'undefined') return '';
   try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const link = Array.from(doc.querySelectorAll('a[href]')).find(node => /^https?:/i.test(node.href));
+    const doc = new DOMParser().parseFromString(normalizeEmailHtml(html), 'text/html');
+    const link = Array.from(doc.querySelectorAll('a[href]')).find(node => /^https?:/i.test(node.getAttribute('href') || node.href));
     return link?.href || '';
   } catch {
     return '';
@@ -122,15 +167,16 @@ export default function PrimeMailV4() {
 
   const fetchEmails = useCallback(async () => {
     const params = new URLSearchParams({ folder: currentFolder, limit: '100' });
+    params.set('order', sortOrder === 'asc' ? 'asc' : 'desc');
     if (search.trim()) params.set('search', search.trim());
     if (currentAccount !== 'all') params.set('account', currentAccount);
     try {
       const data = await requestJson(`${API_BASE}/emails?${params}`);
       setEmails(data.emails || []);
     } catch (error) {
-      setNotice(`Mail load failed: ${error.message}`);
+      setNotice(`Signal feed failed: ${error.message}`);
     }
-  }, [currentAccount, currentFolder, requestJson, search]);
+  }, [currentAccount, currentFolder, requestJson, search, sortOrder]);
 
   const refreshChrome = useCallback(async () => {
     const accountCall = requestJson(`${API_BASE}/accounts`).catch(() => ({ accounts: [] }));
@@ -187,7 +233,7 @@ export default function PrimeMailV4() {
       setCaliDossier(dossier);
       setCaliTimeline(timeline?.events || []);
     } catch (error) {
-      setNotice(`CALI dossier unavailable: ${error.message}`);
+      setNotice(`VIV dossier unavailable: ${error.message}`);
     } finally {
       setDossierLoading(false);
     }
@@ -202,7 +248,7 @@ export default function PrimeMailV4() {
       const data = await requestJson(`${API_BASE}/emails/${email.id}`);
       setSelectedEmail(data);
     } catch (error) {
-      setNotice(`Could not open message: ${error.message}`);
+      setNotice(`Could not open signal: ${error.message}`);
     }
   }
 
@@ -211,6 +257,16 @@ export default function PrimeMailV4() {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
     await Promise.all([fetchEmails(), refreshChrome()]);
+  }
+
+  async function toggleStar(event, email) {
+    event.stopPropagation();
+    try {
+      await patchEmail(email.id, { starred: !email.starred });
+      if (selectedEmail?.id === email.id) {
+        setSelectedEmail(prev => prev ? { ...prev, starred: !prev.starred } : prev);
+      }
+    } catch (error) { setNotice(error.message); }
   }
 
   async function archiveSelected() {
@@ -225,7 +281,7 @@ export default function PrimeMailV4() {
     if (!selectedEmail) return;
     try {
       await patchEmail(selectedEmail.id, { folder: 'snoozed' });
-      setNotice('Message moved to Snoozed.');
+      setNotice('Signal moved to Deferred Signals.');
       setSelectedEmail(null);
     } catch (error) { setNotice(error.message); }
   }
@@ -261,7 +317,7 @@ export default function PrimeMailV4() {
     if (!selectedEmail) return;
     openCompose({
       subject: `Fwd: ${selectedEmail.subject || ''}`,
-      text: `\n\n---------- Forwarded message ----------\nFrom: ${selectedEmail.sender || ''}\nDate: ${selectedEmail.date || ''}\nSubject: ${selectedEmail.subject || ''}\n\n${cleanText(selectedEmail.text_body || '')}`
+      text: `\n\n---------- Relay Forward ----------\nOrigin Signature: ${selectedEmail.sender || ''}\nTimestamp: ${selectedEmail.date || ''}\nBrief: ${selectedEmail.subject || ''}\n\n${cleanText(selectedEmail.text_body || '')}`
     });
   }
 
@@ -273,19 +329,19 @@ export default function PrimeMailV4() {
       });
       setComposeOpen(false);
       setCompose(prev => ({ ...prev, to: '', subject: '', text: '' }));
-      setNotice('Message sent.');
+      setNotice('Transmission executed.');
       await fetchEmails();
-    } catch (error) { setNotice(`Send failed: ${error.message}`); }
+    } catch (error) { setNotice(`Transmission failed: ${error.message}`); }
   }
 
   async function syncNow() {
     setSyncing(true);
     try {
       const result = await requestJson(`${API_BASE}/integrations/cali/retry-pending?limit=100`, { method: 'POST' });
-      setNotice(result.attempted ? `CALI sync: ${result.delivered}/${result.attempted} handoffs delivered.` : 'Mail + CALI already synchronized.');
+      setNotice(result.attempted ? `Durable handoff: ${result.delivered}/${result.attempted} signals delivered.` : 'Signal bridge already synchronized.');
       await refreshChrome();
       if (selectedSenderEmail) await loadCaliDossier(selectedSenderEmail);
-    } catch (error) { setNotice(`Sync failed: ${error.message}`); }
+    } catch (error) { setNotice(`Bridge sync failed: ${error.message}`); }
     finally { setSyncing(false); }
   }
 
@@ -332,90 +388,90 @@ export default function PrimeMailV4() {
 
   const activeBusinessLabel = BUSINESS_OPTIONS.find(([id]) => id === businessScope)?.[1] || businessScope;
   const recentTimeline = caliTimeline.slice(0, 3);
-  const stage = legacyContact.crm_stage || primaryRole?.role || (caliParty ? 'Relationship' : 'Unlinked');
+  const stage = legacyContact.crm_stage || primaryRole?.role || (caliParty ? 'Known Link' : 'Unlinked');
   const lastContact = legacyContact.last_contacted_at || caliDossier?.latest_message?.occurred_at || selectedEmail?.date;
-  const nextAction = legacyContact.next_follow_up_at || '—';
+  const nextAction = legacyContact.next_follow_up_at || '-';
   const verification = caliParty?.verification_state || identities.email?.[0]?.verification_state || 'unverified';
 
   return (
     <div className="pm4-app">
       <header className="pm4-topbar">
-        <div className="pm4-brand"><div className="pm4-brandmark">P</div><strong>PRIME MAIL</strong></div>
-        <div className="pm4-search-wrap"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search mail, people, attachments..." /></div>
+        <div className="pm4-brand"><img className="pm4-brand-logo" src="/VIVLOGO.png" alt="VIV" /><strong>VIV</strong></div>
+        <div className="pm4-search-wrap"><span>Scan</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Signal scan: subject, origin, body..." /></div>
         <select className="pm4-account-select" value={currentAccount} onChange={event => { setCurrentAccount(event.target.value); setSelectedEmail(null); }}>
-          <option value="all">All accounts</option>
+          <option value="all">All Field Units</option>
           {accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}
         </select>
-        <button className="pm4-btn pm4-green" onClick={() => openCompose()}>Compose</button>
+        <button className="pm4-btn pm4-green" onClick={() => openCompose()}>Compose Transmission</button>
         <button className="pm4-btn pm4-blue" onClick={callOrb}>ORB</button>
-        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/contacts')}>CRM</button>
-        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/calendar')}>Calendar</button>
-        <button className={`pm4-sync ${syncing ? 'busy' : ''}`} onClick={syncNow}><span />{syncing ? 'SYNCING' : 'SYNC'}</button>
+        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/contacts')}>Dossiers</button>
+        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/calendar')}>Event Grid</button>
+        <button className={`pm4-sync ${syncing ? 'busy' : ''}`} onClick={syncNow}><span />{syncing ? 'BRIDGING' : 'BRIDGE'}</button>
       </header>
 
       <main className="pm4-shell">
         <aside className="pm4-sidebar">
-          <button className="pm4-compose-wide" onClick={() => openCompose()}>＋ Compose</button>
-          <div className="pm4-label">WORKSPACE</div>
-          <div className="pm4-workspace"><button className="active">Mail</button><button onClick={() => openCrm('/contacts')}>CRM</button><button onClick={() => openCrm('/calendar')}>Cal</button></div>
+          <button className="pm4-compose-wide" onClick={() => openCompose()}>+ Compose Transmission</button>
+          <div className="pm4-label">COMMAND DECK</div>
+          <div className="pm4-workspace"><button className="active">Signals</button><button onClick={() => openCrm('/contacts')}>Dossiers</button><button onClick={() => openCrm('/calendar')}>Events</button></div>
 
-          <div className="pm4-label">MAILBOX</div>
-          <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{selectedAccount || 'All accounts'}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread · {currentAccount === 'all' ? 'All accounts' : 'This account'}</small></div></div>
+          <div className="pm4-label">OPS CHANNEL</div>
+          <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{selectedAccount || 'All Field Units'}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread signals - {currentAccount === 'all' ? 'All field units' : 'Active field unit'}</small></div></div>
 
-          <div className="pm4-label">FOLDERS</div>
+          <div className="pm4-label">SIGNAL VAULTS</div>
           <nav className="pm4-folders">
-            {folderNames.map(name => <button key={name} className={currentFolder === name ? 'active' : ''} onClick={() => { setCurrentFolder(name); setSelectedEmail(null); }}><span className="pm4-radio" /><span>{name.charAt(0).toUpperCase() + name.slice(1)}</span>{folderCount(name) !== '' && <b>{folderCount(name)}</b>}</button>)}
+            {folderNames.map(name => <button key={name} className={currentFolder === name ? 'active' : ''} onClick={() => { setCurrentFolder(name); setSelectedEmail(null); }}><img className="pm4-folder-logo" src={name === 'starred' ? '/redVIVlogo.png' : '/VIVLOGO.png'} alt="" /><span>{folderLabel(name)}</span>{folderCount(name) !== '' && <b>{folderCount(name)}</b>}</button>)}
           </nav>
 
-          <div className="pm4-label">BUSINESS</div>
-          <div className="pm4-business-card"><strong>{activeBusinessLabel}</strong><small>{businessScope === 'all' ? 'All relationship contexts' : businessScope.replaceAll('_', '.')}</small><select value={businessScope} onChange={event => changeBusiness(event.target.value)}>{BUSINESS_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
+          <div className="pm4-label">COMPARTMENT</div>
+          <div className="pm4-business-card"><strong>{activeBusinessLabel}</strong><small>{businessScope === 'all' ? 'All compartment scopes' : businessScope.replaceAll('_', '.')}</small><select value={businessScope} onChange={event => changeBusiness(event.target.value)}>{BUSINESS_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
 
-          <div className="pm4-label">CONNECTED</div>
-          <div className="pm4-connected"><div><span className={`pm4-dot ${crmOnline ? 'green' : 'amber'}`} />CRM<small>{crmOnline ? 'Connected' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Calendar<small>{calendarOnline ? 'Connected' : 'Check'}</small></div><div><span className="pm4-dot green" />Sync<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
-          <div className="pm4-sidebar-footer"><button onClick={() => openCrm('/settings')}>⚙ Settings</button><button onClick={() => setNotice('Manage accounts from PRIME MAIL registry settings.')}>Manage accounts</button></div>
+          <div className="pm4-label">BRIDGES</div>
+          <div className="pm4-connected"><div><span className={`pm4-dot ${crmOnline ? 'green' : 'amber'}`} />VIV<small>{crmOnline ? 'Linked' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Event Grid<small>{calendarOnline ? 'Linked' : 'Check'}</small></div><div><span className="pm4-dot green" />Custody<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
+          <div className="pm4-sidebar-footer"><button onClick={() => openCrm('/settings')}>Cipher</button><button onClick={() => setNotice('Manage field units from VIV registry settings.')}>Field units</button></div>
         </aside>
 
         <section className="pm4-list-panel">
-          <div className="pm4-list-head"><div><h2>{currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1)}</h2><span>{emails.length} messages</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="desc">Newest ↓</option><option value="asc">Oldest ↑</option></select><button onClick={fetchEmails}>↻</button></div></div>
+          <div className="pm4-list-head"><div><h2>{folderLabel(currentFolder)}</h2><span>{emails.length} signals</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="desc">Chrono Sort: Newest First</option><option value="asc">Chrono Sort: Oldest First</option></select><button onClick={fetchEmails}>Scan</button></div></div>
           <div className="pm4-message-scroll">
-            {sortedEmails.map(email => <button key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || '').slice(0, 92) || 'HTML message'}</p><span>Inbox</span></button>)}
-            {!sortedEmails.length && <div className="pm4-empty">No messages in this folder.</div>}
+            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{email.folder || currentFolder}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Clear importance mark' : 'Mark important'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
+            {!sortedEmails.length && <div className="pm4-empty">No signals in this vault.</div>}
           </div>
         </section>
 
         <section className="pm4-reader">
           {selectedEmail ? <>
-            <div className="pm4-reader-head"><h1>{selectedEmail.subject || '(No subject)'}</h1><div className="pm4-meta"><span>From</span><strong>{selectedEmail.sender}</strong><span>To</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
-            {actionLink && <div className="pm4-security"><div><strong>Identity verification detected</strong><small>Secure action link found in this message.</small></div><button onClick={() => window.open(actionLink, '_blank', 'noopener,noreferrer')}>Verify →</button></div>}
+            <div className="pm4-reader-head"><h1>{selectedEmail.subject || '(No brief)'}</h1><div className="pm4-meta"><span>Origin</span><strong>{selectedEmail.sender}</strong><span>Target</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
+            {actionLink && <div className="pm4-security"><div><strong>Verification protocol detected</strong><small>External identity-confirmation link found in this signal.</small></div><button onClick={() => window.open(actionLink, '_blank', 'noopener,noreferrer')}>Execute -></button></div>}
             <div className="pm4-reader-body">{selectedEmail.html_body ? <ReaderFrame html={selectedEmail.html_body} /> : <pre>{cleanText(selectedEmail.text_body || '')}</pre>}</div>
-            <div className="pm4-reader-actions"><button onClick={reply}>Reply</button><button onClick={forward}>Forward</button><button onClick={archiveSelected}>Archive</button><button className="danger" onClick={deleteSelected}>Delete</button><button onClick={snoozeSelected}>Snooze</button><button className="event" onClick={createEvent}>＋ Event</button></div>
-          </> : <div className="pm4-reader-empty"><div className="pm4-brandmark large">P</div><h2>PRIME MAIL</h2><p>Select a message to open the reader and relationship dossier.</p></div>}
+            <div className="pm4-reader-actions"><button onClick={reply}>Intercept</button><button onClick={forward}>Relay Forward</button><button onClick={archiveSelected}>Archive Custody</button><button onClick={event => toggleStar(event, selectedEmail)}>{selectedEmail.starred ? 'Clear Star Mark' : 'Star Mark'}</button><button className="danger" onClick={deleteSelected}>Tombstone</button><button onClick={snoozeSelected}>Defer</button><button className="event" onClick={createEvent}>+ Event</button></div>
+          </> : <div className="pm4-reader-empty"><img className="pm4-reader-logo" src="/VIVLOGO.png" alt="VIV" /><h2>VIV</h2><p>Select a signal to open the reader and docked dossier.</p></div>}
         </section>
 
         <aside className="pm4-dossier">
-          <div className="pm4-dossier-head"><div><strong>CONTACT DOSSIER</strong><span>{dossierLoading ? 'LOADING' : 'DOCKED'}</span></div><button onClick={() => openCrm('/contacts')}>↗</button></div>
+          <div className="pm4-dossier-head"><div><strong>DOCKED DOSSIER</strong><span>{dossierLoading ? 'RESOLVING' : 'DOCKED'}</span></div><button onClick={() => openCrm('/contacts')}>Open</button></div>
           {selectedEmail ? <div className="pm4-dossier-scroll">
-            <div className="pm4-person-card"><div className="pm4-avatar">{initials(senderName)}</div><div><h2>{senderName}</h2><p>{legacyContact.company_role || primaryRole?.role || (caliParty ? 'CALI relationship' : 'Mail correspondent')}</p><span className={caliParty ? 'linked' : 'unlinked'}>{caliParty ? 'CALI LINKED' : 'UNLINKED'}</span></div></div>
+            <div className="pm4-person-card"><div className="pm4-avatar">{initials(senderName)}</div><div><h2>{senderName}</h2><p>{legacyContact.company_role || primaryRole?.role || (caliParty ? 'Known subject' : 'Unresolved origin')}</p><span className={caliParty ? 'linked' : 'unlinked'}>{caliParty ? 'IDENTITY RESOLVED' : 'UNRESOLVED'}</span></div></div>
 
-            <div className="pm4-dossier-label">CONTACT</div>
-            <div className="pm4-dossier-card"><div><span>Email</span><strong>{primaryEmail || '—'}</strong></div><div><span>Phone</span><strong>{primaryPhone || '—'}</strong></div><div><span>Company</span><strong>{company || '—'}</strong></div></div>
+            <div className="pm4-dossier-label">CANONICAL IDENTITY</div>
+            <div className="pm4-dossier-card"><div><span>Origin</span><strong>{primaryEmail || '-'}</strong></div><div><span>Line</span><strong>{primaryPhone || '-'}</strong></div><div><span>Affiliation</span><strong>{company || '-'}</strong></div></div>
 
-            <div className="pm4-dossier-label">CRM STATUS</div>
-            <div className="pm4-dossier-card"><div><span>Stage</span><strong>{stage}</strong></div><div><span>Last contact</span><strong>{formatDate(lastContact) || 'Current email'}</strong></div><div><span>Next action</span><strong>{nextAction}</strong></div><div><span>Identity</span><strong>{verification}</strong></div></div>
+            <div className="pm4-dossier-label">INTELLIGENCE STATE</div>
+            <div className="pm4-dossier-card"><div><span>Escalation</span><strong>{stage}</strong></div><div><span>Last signal</span><strong>{formatDate(lastContact) || 'Current signal'}</strong></div><div><span>Next command</span><strong>{nextAction}</strong></div><div><span>Verification</span><strong>{verification}</strong></div></div>
 
-            <div className="pm4-dossier-label">RECENT ACTIVITY</div>
-            <div className="pm4-activity-card">{recentTimeline.length ? recentTimeline.map((event, index) => <div key={event.message_id || index}><span className={`pm4-dot ${index === 0 ? 'green' : index === 1 ? 'blue' : 'purple'}`} /><div><strong>{event.title || `${event.direction || 'Email'} message`}</strong><small>{formatDate(event.occurred_at)} · {event.direction || 'email'}</small></div></div>) : <div><span className="pm4-dot blue" /><div><strong>{caliParty ? 'CALI contact linked' : 'No CALI history yet'}</strong><small>{caliParty ? 'Canonical identity resolved' : 'This sender will link when communication is ingested'}</small></div></div>}</div>
+            <div className="pm4-dossier-label">EVENT TIMELINE</div>
+            <div className="pm4-activity-card">{recentTimeline.length ? recentTimeline.map((event, index) => <div key={event.message_id || index}><span className={`pm4-dot ${index === 0 ? 'green' : index === 1 ? 'blue' : 'purple'}`} /><div><strong>{event.title || `${event.direction || 'Signal'} event`}</strong><small>{formatDate(event.occurred_at)} - {event.direction || 'signal'}</small></div></div>) : <div><span className="pm4-dot blue" /><div><strong>{caliParty ? 'Canonical identity linked' : 'No event timeline yet'}</strong><small>{caliParty ? 'Subject resolved through VIV' : 'This origin will link when the signal is ingested'}</small></div></div>}</div>
 
-            <div className="pm4-dossier-label">QUICK ACTIONS</div>
-            <div className="pm4-quick-actions"><button className="primary" onClick={() => openCrm('/contacts')}>Open CRM</button><button onClick={() => openCrm('/contacts')}>Add note</button><button onClick={createEvent}>Event</button></div>
-            <div className="pm4-linked-banner">Mail + CRM + Calendar linked <span>{crmOnline ? 'SYNCED' : 'CHECK CRM'}</span></div>
-          </div> : <div className="pm4-dossier-empty">Select a message to load its CALI relationship dossier.</div>}
+            <div className="pm4-dossier-label">COMMANDS</div>
+            <div className="pm4-quick-actions"><button className="primary" onClick={() => openCrm('/contacts')}>Open Dossier</button><button onClick={() => openCrm('/contacts')}>Add Claim</button><button onClick={createEvent}>Event</button></div>
+            <div className="pm4-linked-banner">Signals + Dossiers + Event Grid linked <span>{crmOnline ? 'BRIDGED' : 'CHECK BRIDGE'}</span></div>
+          </div> : <div className="pm4-dossier-empty">Select a signal to load its VIV dossier.</div>}
         </aside>
       </main>
 
-      {notice && <div className="pm4-notice" onClick={() => setNotice('')}>{notice}<button>×</button></div>}
+      {notice && <div className="pm4-notice" onClick={() => setNotice('')}>{notice}<button>x</button></div>}
 
-      {composeOpen && <div className="pm4-modal-backdrop" onMouseDown={() => setComposeOpen(false)}><form className="pm4-compose-modal" onSubmit={sendCompose} onMouseDown={event => event.stopPropagation()}><div className="pm4-compose-title"><strong>New message</strong><button type="button" onClick={() => setComposeOpen(false)}>×</button></div><label>From<select value={compose.from_address} onChange={event => setCompose(prev => ({ ...prev, from_address: event.target.value }))}>{accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}</select></label><label>To<input required value={compose.to} onChange={event => setCompose(prev => ({ ...prev, to: event.target.value }))} /></label><label>Subject<input value={compose.subject} onChange={event => setCompose(prev => ({ ...prev, subject: event.target.value }))} /></label><textarea value={compose.text} onChange={event => setCompose(prev => ({ ...prev, text: event.target.value }))} placeholder="Write your message..." /><div className="pm4-compose-footer"><button type="button" onClick={() => setComposeOpen(false)}>Cancel</button><button type="submit" className="send">Send</button></div></form></div>}
+      {composeOpen && <div className="pm4-modal-backdrop" onMouseDown={() => setComposeOpen(false)}><form className="pm4-compose-modal" onSubmit={sendCompose} onMouseDown={event => event.stopPropagation()}><div className="pm4-compose-title"><strong>Compose Transmission</strong><button type="button" onClick={() => setComposeOpen(false)}>x</button></div><label>Origin<select value={compose.from_address} onChange={event => setCompose(prev => ({ ...prev, from_address: event.target.value }))}>{accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}</select></label><label>Target<input required value={compose.to} onChange={event => setCompose(prev => ({ ...prev, to: event.target.value }))} /></label><label>Brief<input value={compose.subject} onChange={event => setCompose(prev => ({ ...prev, subject: event.target.value }))} /></label><textarea value={compose.text} onChange={event => setCompose(prev => ({ ...prev, text: event.target.value }))} placeholder="Draft transmission..." /><div className="pm4-compose-footer"><button type="button" onClick={() => setComposeOpen(false)}>Stand Down</button><button type="submit" className="send">Execute Send</button></div></form></div>}
     </div>
   );
 }
