@@ -224,6 +224,22 @@ async def resolve_cali_party(email: str) -> Dict[str, Any]:
     )
 
 
+@router.get("/parties/{party_id:path}/dossier")
+async def cali_party_dossier(
+    party_id: str,
+    business_scope: str = "all",
+) -> Dict[str, Any]:
+    if not legacy.ADMIN_ACCESS_TOKEN:
+        raise HTTPException(status_code=503, detail="CALI admin token is not configured")
+    encoded_party = quote(party_id, safe="")
+    return await legacy.external_json_request(
+        "GET",
+        f"{legacy.CRM_API_URL}/cali/intelligence/parties/{encoded_party}/dossier",
+        headers=legacy.crm_headers(),
+        params={"business_scope": business_scope},
+    )
+
+
 @router.get("/parties/{party_id:path}/timeline")
 async def cali_party_timeline(
     party_id: str,
