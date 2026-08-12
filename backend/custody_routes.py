@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import main as legacy
+from cali_bridge_routes import enqueue_and_dispatch
 
 router = APIRouter(tags=["prime-mail-custody"])
 
@@ -129,23 +130,17 @@ def _account_context(recipients: list[str]) -> dict:
     return {"email": fallback, "business_scope": "all", "account_id": ""}
 
 
-async def _publish_to_cali(
+def _cali_payload(
     email: CustodyIncomingEmail,
     *,
     custody: dict,
     thread_id: str,
 ) -> dict:
-    # CALI availability must never determine whether PRIME MAIL accepts and
-    # preserves a message. Raw custody is authoritative for the transport event;
-    # this handoff can be retried if CALI is offline or not yet configured.
-    if not legacy.ADMIN_ACCESS_TOKEN:
-        return {"status": "skipped", "reason": "CALI admin token is not configured"}
-
     recipients = _recipient_addresses(email.to)
     account = _account_context(recipients)
     sender_name, sender_address = parseaddr(email.from_)
     sender_email = legacy.normalize_email(sender_address or email.from_)
-    payload = {
+    return {
         "channel": "email",
         "provider": "prime_mail",
         "account_identity": account["email"],
@@ -162,19 +157,6 @@ async def _publish_to_cali(
         "sender_name": sender_name or None,
         "recipient_emails": recipients,
     }
-
-    try:
-        response = await legacy.external_json_request(
-            "POST",
-            f"{legacy.CRM_API_URL}/cali/intelligence/messages/ingest",
-            headers=legacy.crm_headers(),
-            json_body=payload,
-        )
-        return {"status": "recorded", "response": response}
-    except HTTPException as exc:
-        return {"status": "deferred", "reason": str(exc.detail)}
-    except Exception as exc:
-        return {"status": "deferred", "reason": str(exc)}
 
 
 @router.post("/api/emails/receive")
@@ -201,7 +183,11 @@ async def receive_email_with_custody(email: CustodyIncomingEmail, request: Reque
     )
     result = await legacy.receive_email(legacy_payload, request)
     thread_id = str(result.get("thread_id") or legacy.build_thread_id(email.subject)) if isinstance(result, dict) else legacy.build_thread_id(email.subject)
-    cali_sync = await _publish_to_cali(email, custody=custody, thread_id=thread_id)
+
+    # Queue first, then attempt delivery. PRIME MAIL remains able to receive mail
+    # when CALI is unavailable, and the exact handoff can be retried later.
+    cali_sync = await enqueue_and_dispatch(_cali_payload(email, custody=custody, thread_id=thread_id))
+
     if isinstance(result, dict):
         return {**result, "custody": custody, "cali_sync": cali_sync}
     return {"result": result, "custody": custody, "cali_sync": cali_sync}
