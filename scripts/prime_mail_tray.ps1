@@ -6,12 +6,20 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class VivMailNativeIcon {
+  [DllImport("user32.dll")]
+  public static extern bool DestroyIcon(IntPtr handle);
+}
+'@
 
 $root = Split-Path -Parent $PSScriptRoot
 $backendBatch = Join-Path $root 'start_backend.bat'
 $frontendDir = Join-Path $root 'frontend'
 $buildIndex = Join-Path $frontendDir 'build\index.html'
-$iconPath = Join-Path $root 'assets\prime_mail.ico'
+$iconPath = Join-Path $root 'frontend\public\redVIVlogo.png'
 $logDir = Join-Path $env:LOCALAPPDATA 'PrimeMail'
 $logFile = Join-Path $logDir 'tray.log'
 $port = 19000
@@ -23,6 +31,26 @@ function Write-TrayLog([string]$Message) {
   try {
     Add-Content -LiteralPath $logFile -Value ("{0:u} {1}" -f (Get-Date), $Message) -Encoding UTF8
   } catch {}
+}
+
+function Get-PngTrayIcon([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return $null }
+  $bitmap = $null
+  $sourceIcon = $null
+  $handle = [IntPtr]::Zero
+  try {
+    $bitmap = New-Object System.Drawing.Bitmap($Path)
+    $handle = $bitmap.GetHicon()
+    $sourceIcon = [System.Drawing.Icon]::FromHandle($handle)
+    return $sourceIcon.Clone()
+  } catch {
+    Write-TrayLog "Tray icon load failed: $($_.Exception.Message)"
+    return $null
+  } finally {
+    if ($sourceIcon) { $sourceIcon.Dispose() }
+    if ($handle -ne [IntPtr]::Zero) { [void][VivMailNativeIcon]::DestroyIcon($handle) }
+    if ($bitmap) { $bitmap.Dispose() }
+  }
 }
 
 $createdNew = $false
@@ -58,7 +86,7 @@ function Ensure-FrontendBuild {
     return (Test-Path -LiteralPath $buildIndex)
   }
 
-  Write-TrayLog 'Building PRIME MAIL frontend.'
+  Write-TrayLog 'Building VIV Mail frontend.'
   Push-Location $frontendDir
   try {
     & $npm.Source run build *>> $logFile
@@ -83,7 +111,7 @@ function Start-MailBackend {
     return
   }
 
-  Write-TrayLog 'Starting PRIME MAIL backend.'
+  Write-TrayLog 'Starting VIV Mail backend.'
   Start-Process -FilePath $env:ComSpec `
     -ArgumentList @('/c', ('"{0}"' -f $backendBatch)) `
     -WorkingDirectory $root `
@@ -99,7 +127,7 @@ function Stop-MailBackend {
           Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
         }
       }
-    Write-TrayLog 'Stopped PRIME MAIL backend listener.'
+    Write-TrayLog 'Stopped VIV Mail backend listener.'
   } catch {
     Write-TrayLog "Stop backend failed: $($_.Exception.Message)"
   }
@@ -111,12 +139,13 @@ function Open-PrimeMail {
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $notify = New-Object System.Windows.Forms.NotifyIcon
-if (Test-Path -LiteralPath $iconPath) {
-  try { $notify.Icon = New-Object System.Drawing.Icon($iconPath) } catch { $notify.Icon = [System.Drawing.SystemIcons]::Application }
+$trayIcon = Get-PngTrayIcon $iconPath
+if ($trayIcon) {
+  $notify.Icon = $trayIcon
 } else {
   $notify.Icon = [System.Drawing.SystemIcons]::Application
 }
-$notify.Text = 'PRIME MAIL'
+$notify.Text = 'VIV Mail'
 $notify.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -124,11 +153,11 @@ $statusItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $statusItem.Enabled = $false
 [void]$menu.Items.Add($statusItem)
 
-$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open PRIME MAIL')
+$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open VIV Mail')
 $openItem.Add_Click({ Open-PrimeMail })
 [void]$menu.Items.Add($openItem)
 
-$restartItem = New-Object System.Windows.Forms.ToolStripMenuItem('Restart PRIME MAIL')
+$restartItem = New-Object System.Windows.Forms.ToolStripMenuItem('Restart VIV Mail')
 $restartItem.Add_Click({
   Stop-MailBackend
   Start-Sleep -Milliseconds 750
@@ -143,7 +172,7 @@ $logsItem.Add_Click({
 [void]$menu.Items.Add($logsItem)
 
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-$stopItem = New-Object System.Windows.Forms.ToolStripMenuItem('Stop PRIME MAIL')
+$stopItem = New-Object System.Windows.Forms.ToolStripMenuItem('Stop VIV Mail')
 $stopItem.Add_Click({ Stop-MailBackend })
 [void]$menu.Items.Add($stopItem)
 
@@ -160,10 +189,10 @@ $notify.Add_DoubleClick({ Open-PrimeMail })
 function Update-Status {
   if (Test-MailPort) {
     $statusItem.Text = 'Status: running on 19000'
-    $notify.Text = 'PRIME MAIL - running'
+    $notify.Text = 'VIV Mail - running'
   } else {
     $statusItem.Text = 'Status: stopped'
-    $notify.Text = 'PRIME MAIL - stopped'
+    $notify.Text = 'VIV Mail - stopped'
   }
 }
 
@@ -182,5 +211,6 @@ try {
 } finally {
   try { $timer.Stop(); $timer.Dispose() } catch {}
   try { $notify.Visible = $false; $notify.Dispose() } catch {}
+  try { if ($trayIcon) { $trayIcon.Dispose() } } catch {}
   try { $mutex.ReleaseMutex(); $mutex.Dispose() } catch {}
 }
