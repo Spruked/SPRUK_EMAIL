@@ -49,8 +49,15 @@ if defined RUN_VALUE (
   echo Run key verification: FAILED - %RUN_KEY_PATH%\%RUN_KEY_NAME%
 )
 
+rem Build the React client FIRST so port 19000 can never serve a stale frontend.
+call "%~dp0start_frontend.bat" --no-pause
+if errorlevel 1 (
+  echo PRIME MAIL startup aborted because the frontend build failed.
+  exit /b 1
+)
+
+rem Only start the backend after the current frontend build is ready.
 start "Prime Mail Backend" cmd /c call "%~dp0start_backend.bat"
-start "Prime Mail Frontend" cmd /c call "%~dp0start_frontend.bat"
 
 endlocal
 exit /b 0
