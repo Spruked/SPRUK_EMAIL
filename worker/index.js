@@ -1,7 +1,7 @@
 // ============================================
 // PRIME MAIL - Cloudflare Email Routing Worker
-// Receives RFC email, decodes MIME text/html parts, and forwards
-// the original raw message plus decoded bodies to the R: substrate.
+// Receives RFC email, preserves exact raw bytes, decodes MIME text/html parts,
+// and forwards both custody bytes and derived bodies to the R: substrate.
 // ============================================
 
 function splitHeaderBody(raw = '') {
@@ -58,6 +58,17 @@ function base64ToBytes(value = '') {
   }
 }
 
+function bytesToBase64(bytes) {
+  if (!bytes?.length) return '';
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
 function quotedPrintableToBytes(value = '', headerMode = false) {
   let input = value.replace(/=\r?\n/g, '');
   if (headerMode) input = input.replace(/_/g, ' ');
@@ -106,8 +117,6 @@ function decodeBody(body, headers) {
 
   if (transfer === 'base64') return decodeBytes(base64ToBytes(body), charset);
   if (transfer === 'quoted-printable') return decodeBytes(quotedPrintableToBytes(body), charset);
-
-  // 7bit/8bit/binary bodies are already text in the raw message stream.
   return body;
 }
 
@@ -176,8 +185,12 @@ function parseRawEmail(rawEmail = '') {
 export default {
   async email(message, env, ctx) {
     try {
-      // Preserve the complete raw RFC message for the R: substrate.
-      const rawEmail = await new Response(message.raw).text();
+      // Read the stream once. The byte copy is the custody object; the decoded
+      // string is only a derived representation used by the MIME parser.
+      const rawBuffer = await new Response(message.raw).arrayBuffer();
+      const rawBytes = new Uint8Array(rawBuffer);
+      const rawEmail = new TextDecoder('utf-8', { fatal: false }).decode(rawBytes);
+      const rawEmailBase64 = bytesToBase64(rawBytes);
       const parsed = parseRawEmail(rawEmail);
 
       const subject = decodeMimeWords(parsed.headers.subject || message.headers.get('subject') || 'No Subject');
@@ -193,6 +206,7 @@ export default {
         subject,
         date,
         raw_email: rawEmail,
+        raw_email_base64: rawEmailBase64,
         text_body: parsed.textBody,
         html_body: parsed.htmlBody,
         received_at: new Date().toISOString(),
@@ -229,7 +243,7 @@ export default {
         throw new Error(`Webhook forward failed with ${response.status}`);
       }
 
-      console.log(`Email from ${from} decoded and forwarded to R: drive successfully`);
+      console.log(`Email from ${from} preserved, decoded, and forwarded to R: drive successfully`);
     } catch (error) {
       console.error('Worker error:', error);
       throw error;
@@ -241,7 +255,8 @@ export default {
       return new Response(JSON.stringify({
         status: 'ok',
         worker: 'rdrive-email-worker',
-        mime_decoder: 'v2',
+        mime_decoder: 'v3',
+        raw_custody: 'base64-bytes',
         timestamp: new Date().toISOString()
       }), {
         headers: { 'Content-Type': 'application/json' }
