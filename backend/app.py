@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import main as legacy
+from cali_bridge_routes import ensure_handoff_schema, router as cali_bridge_router
 from custody_routes import receive_email_with_custody, router as custody_router
 from registry_routes import router as registry_router, sync_legacy_account_globals
 
 app = legacy.app
 app.include_router(registry_router)
+app.include_router(cali_bridge_router)
 app.include_router(custody_router)
 
 # The V4 reader isolates decoded message HTML in a sandboxed iframe. Preserve the
@@ -25,9 +27,10 @@ for index, route in enumerate(list(app.router.routes)):
         app.router.routes.insert(0, app.router.routes.pop(index))
         break
 
-# Prime the persistent registry before the first request so legacy send/draft/
-# folder routes immediately recognize accounts added through the registry.
+# Prime persistent registries before the first request so legacy send/draft/folder
+# routes honor dynamically added accounts and CALI handoffs always have a queue.
 sync_legacy_account_globals()
+ensure_handoff_schema()
 
 
 if __name__ == "__main__":
