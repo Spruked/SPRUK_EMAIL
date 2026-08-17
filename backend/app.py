@@ -7,6 +7,13 @@ from custody_routes import receive_email_with_custody, router as custody_router
 from mail_repair import repair_suspicious_messages
 from registry_routes import router as registry_router, sync_legacy_account_globals
 
+# VIV Mail and VIV CRM are components of the same single-owner personal system.
+# Keep the legacy token-aware code paths intact for compatibility, but ensure the
+# internal Mail -> CRM bridge never blocks on a missing owner/admin token. The CRM
+# VIV runtime accepts the owner context through its dependency override.
+if not legacy.ADMIN_ACCESS_TOKEN:
+    legacy.ADMIN_ACCESS_TOKEN = "viv-owner-local"
+
 app = legacy.app
 app.include_router(registry_router)
 app.include_router(cali_bridge_router)
