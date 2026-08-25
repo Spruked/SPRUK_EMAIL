@@ -18,7 +18,7 @@ export default function ContactReviewOverlay() {
       setCandidates(data.candidates || []);
       setFiltered(data.filtered_automated || 0);
     } catch (error) {
-      setNotice(`Contact review unavailable: ${error.message}`);
+      setNotice(`Unknown-source review unavailable: ${error.message}`);
     }
   }, []);
 
@@ -49,7 +49,7 @@ export default function ContactReviewOverlay() {
 
   async function saveSelected() {
     if (!selectedCandidates.length) {
-      setNotice('Select the people you actually want to save.');
+      setNotice('Select the people you want VIV to remember.');
       return;
     }
     setBusy(true);
@@ -70,7 +70,7 @@ export default function ContactReviewOverlay() {
         if (!response.ok) throw new Error(data.detail || `Could not save ${candidate.email}`);
       }
       setSelected({});
-      setNotice(`${selectedCandidates.length} contact${selectedCandidates.length === 1 ? '' : 's'} saved.`);
+      setNotice(`${selectedCandidates.length} source${selectedCandidates.length === 1 ? '' : 's'} added to VIV.`);
       await load();
     } catch (error) {
       setNotice(error.message);
@@ -103,7 +103,7 @@ export default function ContactReviewOverlay() {
     <>
       {candidates.length > 0 && (
         <button className="contact-review-pill" onClick={() => setOpen(true)}>
-          Review people <strong>{candidates.length}</strong>
+          Unknown sources <strong>{candidates.length}</strong>
         </button>
       )}
 
@@ -112,10 +112,10 @@ export default function ContactReviewOverlay() {
           <section className="contact-review-modal" onMouseDown={event => event.stopPropagation()}>
             <header>
               <div>
-                <h2>Save new people?</h2>
+                <h2>Review unknown sources</h2>
                 <p>
-                  Mail does not create contacts automatically. Choose only the people you want to keep.
-                  {filtered > 0 ? ` ${filtered} obvious automated/bulk sender${filtered === 1 ? '' : 's'} filtered out.` : ''}
+                  VIV does not create dossiers automatically. Choose the people you want to remember and link to future communications.
+                  {filtered > 0 ? ` ${filtered} obvious automated/bulk sender${filtered === 1 ? '' : 's'} filtered as noise.` : ''}
                 </p>
               </div>
               <button className="contact-review-close" onClick={() => setOpen(false)}>×</button>
@@ -142,7 +142,7 @@ export default function ContactReviewOverlay() {
               <div>
                 <button onClick={() => setOpen(false)}>Not now</button>
                 <button className="save" disabled={busy || !selectedCandidates.length} onClick={saveSelected}>
-                  {busy ? 'Saving…' : 'Save selected'}
+                  {busy ? 'Saving…' : 'Add to VIV'}
                 </button>
               </div>
             </footer>
