@@ -16,14 +16,14 @@ const BUSINESS_OPTIONS = [
 
 const DEFAULT_FOLDERS = ['inbox', 'drafts', 'sent', 'starred', 'archive', 'spam', 'trash'];
 const FOLDER_LABELS = {
-  inbox: 'Signal Feed',
-  drafts: 'Draft Holds',
-  sent: 'Transmissions',
-  starred: 'Star Marks',
-  archive: 'Archive Custody',
-  spam: 'Quarantine',
-  trash: 'Tombstones',
-  snoozed: 'Deferred Signals'
+  inbox: 'Inbox',
+  drafts: 'Drafts',
+  sent: 'Sent',
+  starred: 'Marked',
+  archive: 'Archive',
+  spam: 'Noise',
+  trash: 'Trash',
+  snoozed: 'Snoozed'
 };
 
 function folderLabel(name = '') {
@@ -174,7 +174,7 @@ export default function PrimeMailV4() {
       const data = await requestJson(`${API_BASE}/emails?${params}`);
       setEmails(data.emails || []);
     } catch (error) {
-      setNotice(`Signal feed failed: ${error.message}`);
+      setNotice(`Inbox refresh failed: ${error.message}`);
     }
   }, [currentAccount, currentFolder, requestJson, search, sortOrder]);
 
@@ -248,7 +248,7 @@ export default function PrimeMailV4() {
       const data = await requestJson(`${API_BASE}/emails/${email.id}`);
       setSelectedEmail(data);
     } catch (error) {
-      setNotice(`Could not open signal: ${error.message}`);
+      setNotice(`Could not open message: ${error.message}`);
     }
   }
 
@@ -281,7 +281,7 @@ export default function PrimeMailV4() {
     if (!selectedEmail) return;
     try {
       await patchEmail(selectedEmail.id, { folder: 'snoozed' });
-      setNotice('Signal moved to Deferred Signals.');
+      setNotice('Message snoozed.');
       setSelectedEmail(null);
     } catch (error) { setNotice(error.message); }
   }
@@ -317,7 +317,7 @@ export default function PrimeMailV4() {
     if (!selectedEmail) return;
     openCompose({
       subject: `Fwd: ${selectedEmail.subject || ''}`,
-      text: `\n\n---------- Relay Forward ----------\nOrigin Signature: ${selectedEmail.sender || ''}\nTimestamp: ${selectedEmail.date || ''}\nBrief: ${selectedEmail.subject || ''}\n\n${cleanText(selectedEmail.text_body || '')}`
+      text: `\n\n---------- Forwarded message ----------\nFrom: ${selectedEmail.sender || ''}\nDate: ${selectedEmail.date || ''}\nSubject: ${selectedEmail.subject || ''}\n\n${cleanText(selectedEmail.text_body || '')}`
     });
   }
 
@@ -329,19 +329,19 @@ export default function PrimeMailV4() {
       });
       setComposeOpen(false);
       setCompose(prev => ({ ...prev, to: '', subject: '', text: '' }));
-      setNotice('Transmission executed.');
+      setNotice('Message sent.');
       await fetchEmails();
-    } catch (error) { setNotice(`Transmission failed: ${error.message}`); }
+    } catch (error) { setNotice(`Send failed: ${error.message}`); }
   }
 
   async function syncNow() {
     setSyncing(true);
     try {
       const result = await requestJson(`${API_BASE}/integrations/cali/retry-pending?limit=100`, { method: 'POST' });
-      setNotice(result.attempted ? `Durable handoff: ${result.delivered}/${result.attempted} signals delivered.` : 'Signal bridge already synchronized.');
+      setNotice(result.attempted ? `VIV sync: ${result.delivered}/${result.attempted} messages correlated.` : 'VIV is already synchronized.');
       await refreshChrome();
       if (selectedSenderEmail) await loadCaliDossier(selectedSenderEmail);
-    } catch (error) { setNotice(`Bridge sync failed: ${error.message}`); }
+    } catch (error) { setNotice(`VIV sync failed: ${error.message}`); }
     finally { setSyncing(false); }
   }
 
@@ -388,7 +388,7 @@ export default function PrimeMailV4() {
 
   const activeBusinessLabel = BUSINESS_OPTIONS.find(([id]) => id === businessScope)?.[1] || businessScope;
   const recentTimeline = caliTimeline.slice(0, 3);
-  const stage = legacyContact.crm_stage || primaryRole?.role || (caliParty ? 'Known Link' : 'Unlinked');
+  const stage = legacyContact.crm_stage || primaryRole?.role || (caliParty ? 'Known' : 'Unknown');
   const lastContact = legacyContact.last_contacted_at || caliDossier?.latest_message?.occurred_at || selectedEmail?.date;
   const nextAction = legacyContact.next_follow_up_at || '-';
   const verification = caliParty?.verification_state || identities.email?.[0]?.verification_state || 'unverified';
@@ -396,82 +396,82 @@ export default function PrimeMailV4() {
   return (
     <div className="pm4-app">
       <header className="pm4-topbar">
-        <div className="pm4-brand"><img className="pm4-brand-logo" src="/VIVLOGO.png" alt="VIV" /><strong>VIV</strong></div>
-        <div className="pm4-search-wrap"><span>Scan</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Signal scan: subject, origin, body..." /></div>
+        <div className="pm4-brand"><img className="pm4-brand-logo" src="/VIVLOGO.png" alt="VIV" /><strong>VIV Communications</strong></div>
+        <div className="pm4-search-wrap"><span>Search</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Sender, subject, or message text..." /></div>
         <select className="pm4-account-select" value={currentAccount} onChange={event => { setCurrentAccount(event.target.value); setSelectedEmail(null); }}>
-          <option value="all">All Field Units</option>
+          <option value="all">All Accounts</option>
           {accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}
         </select>
-        <button className="pm4-btn pm4-green" onClick={() => openCompose()}>Compose Transmission</button>
+        <button className="pm4-btn pm4-green" onClick={() => openCompose()}>Compose</button>
         <button className="pm4-btn pm4-blue" onClick={callOrb}>ORB</button>
         <button className="pm4-btn pm4-dark" onClick={() => openCrm('/contacts')}>Dossiers</button>
-        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/calendar')}>Event Grid</button>
-        <button className={`pm4-sync ${syncing ? 'busy' : ''}`} onClick={syncNow}><span />{syncing ? 'BRIDGING' : 'BRIDGE'}</button>
+        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/calendar')}>Timeline</button>
+        <button className={`pm4-sync ${syncing ? 'busy' : ''}`} onClick={syncNow}><span />{syncing ? 'SYNCING' : 'SYNC VIV'}</button>
       </header>
 
       <main className="pm4-shell">
         <aside className="pm4-sidebar">
-          <button className="pm4-compose-wide" onClick={() => openCompose()}>+ Compose Transmission</button>
-          <div className="pm4-label">COMMAND DECK</div>
-          <div className="pm4-workspace"><button className="active">Signals</button><button onClick={() => openCrm('/contacts')}>Dossiers</button><button onClick={() => openCrm('/calendar')}>Events</button></div>
+          <button className="pm4-compose-wide" onClick={() => openCompose()}>+ Compose</button>
+          <div className="pm4-label">VIV COMMUNICATIONS</div>
+          <div className="pm4-workspace"><button className="active">Mail</button><button onClick={() => openCrm('/contacts')}>Dossiers</button><button onClick={() => openCrm('/calendar')}>Timeline</button></div>
 
-          <div className="pm4-label">OPS CHANNEL</div>
-          <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{selectedAccount || 'All Field Units'}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread signals - {currentAccount === 'all' ? 'All field units' : 'Active field unit'}</small></div></div>
+          <div className="pm4-label">MAILBOXES</div>
+          <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{selectedAccount || 'All Accounts'}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread messages · {currentAccount === 'all' ? 'All accounts' : 'Active account'}</small></div></div>
 
-          <div className="pm4-label">SIGNAL VAULTS</div>
+          <div className="pm4-label">FOLDERS</div>
           <nav className="pm4-folders">
             {folderNames.map(name => <button key={name} className={currentFolder === name ? 'active' : ''} onClick={() => { setCurrentFolder(name); setSelectedEmail(null); }}><img className="pm4-folder-logo" src={name === 'starred' ? '/redVIVlogo.png' : '/VIVLOGO.png'} alt="" /><span>{folderLabel(name)}</span>{folderCount(name) !== '' && <b>{folderCount(name)}</b>}</button>)}
           </nav>
 
-          <div className="pm4-label">COMPARTMENT</div>
-          <div className="pm4-business-card"><strong>{activeBusinessLabel}</strong><small>{businessScope === 'all' ? 'All compartment scopes' : businessScope.replaceAll('_', '.')}</small><select value={businessScope} onChange={event => changeBusiness(event.target.value)}>{BUSINESS_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
+          <div className="pm4-label">CONTEXT</div>
+          <div className="pm4-business-card"><strong>{activeBusinessLabel}</strong><small>{businessScope === 'all' ? 'All contexts' : businessScope.replaceAll('_', ' ')}</small><select value={businessScope} onChange={event => changeBusiness(event.target.value)}>{BUSINESS_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
 
-          <div className="pm4-label">BRIDGES</div>
-          <div className="pm4-connected"><div><span className={`pm4-dot ${crmOnline ? 'green' : 'amber'}`} />VIV<small>{crmOnline ? 'Linked' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Event Grid<small>{calendarOnline ? 'Linked' : 'Check'}</small></div><div><span className="pm4-dot green" />Custody<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
-          <div className="pm4-sidebar-footer"><button onClick={() => openCrm('/settings')}>Cipher</button><button onClick={() => setNotice('Manage field units from VIV registry settings.')}>Field units</button></div>
+          <div className="pm4-label">LINKS</div>
+          <div className="pm4-connected"><div><span className={`pm4-dot ${crmOnline ? 'green' : 'amber'}`} />VIV<small>{crmOnline ? 'Linked' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Timeline<small>{calendarOnline ? 'Linked' : 'Check'}</small></div><div><span className="pm4-dot green" />Correlation<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
+          <div className="pm4-sidebar-footer"><button onClick={() => openCrm('/settings')}>Settings</button><button onClick={() => setNotice('Manage mail accounts from VIV settings.')}>Accounts</button></div>
         </aside>
 
         <section className="pm4-list-panel">
-          <div className="pm4-list-head"><div><h2>{folderLabel(currentFolder)}</h2><span>{emails.length} signals</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="desc">Chrono Sort: Newest First</option><option value="asc">Chrono Sort: Oldest First</option></select><button onClick={fetchEmails}>Scan</button></div></div>
+          <div className="pm4-list-head"><div><h2>{folderLabel(currentFolder)}</h2><span>{emails.length} messages</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="desc">Newest First</option><option value="asc">Oldest First</option></select><button onClick={fetchEmails}>Refresh</button></div></div>
           <div className="pm4-message-scroll">
-            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{email.folder || currentFolder}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Clear importance mark' : 'Mark important'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
-            {!sortedEmails.length && <div className="pm4-empty">No signals in this vault.</div>}
+            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{folderLabel(email.folder || currentFolder)}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Clear importance mark' : 'Mark important'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
+            {!sortedEmails.length && <div className="pm4-empty">No messages in this folder.</div>}
           </div>
         </section>
 
         <section className="pm4-reader">
           {selectedEmail ? <>
-            <div className="pm4-reader-head"><h1>{selectedEmail.subject || '(No brief)'}</h1><div className="pm4-meta"><span>Origin</span><strong>{selectedEmail.sender}</strong><span>Target</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
-            {actionLink && <div className="pm4-security"><div><strong>Verification protocol detected</strong><small>External identity-confirmation link found in this signal.</small></div><button onClick={() => window.open(actionLink, '_blank', 'noopener,noreferrer')}>Execute -></button></div>}
+            <div className="pm4-reader-head"><h1>{selectedEmail.subject || '(No subject)'}</h1><div className="pm4-meta"><span>From</span><strong>{selectedEmail.sender}</strong><span>To</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
+            {actionLink && <div className="pm4-security"><div><strong>External verification link detected</strong><small>This message contains an external identity-confirmation link.</small></div><button onClick={() => window.open(actionLink, '_blank', 'noopener,noreferrer')}>Open →</button></div>}
             <div className="pm4-reader-body">{selectedEmail.html_body ? <ReaderFrame html={selectedEmail.html_body} /> : <pre>{cleanText(selectedEmail.text_body || '')}</pre>}</div>
-            <div className="pm4-reader-actions"><button onClick={reply}>Intercept</button><button onClick={forward}>Relay Forward</button><button onClick={archiveSelected}>Archive Custody</button><button onClick={event => toggleStar(event, selectedEmail)}>{selectedEmail.starred ? 'Clear Star Mark' : 'Star Mark'}</button><button className="danger" onClick={deleteSelected}>Tombstone</button><button onClick={snoozeSelected}>Defer</button><button className="event" onClick={createEvent}>+ Event</button></div>
-          </> : <div className="pm4-reader-empty"><img className="pm4-reader-logo" src="/VIVLOGO.png" alt="VIV" /><h2>VIV</h2><p>Select a signal to open the reader and docked dossier.</p></div>}
+            <div className="pm4-reader-actions"><button onClick={reply}>Reply</button><button onClick={forward}>Forward</button><button onClick={archiveSelected}>Archive</button><button onClick={event => toggleStar(event, selectedEmail)}>{selectedEmail.starred ? 'Unmark' : 'Mark'}</button><button className="danger" onClick={deleteSelected}>Delete</button><button onClick={snoozeSelected}>Snooze</button><button className="event" onClick={createEvent}>+ Event</button></div>
+          </> : <div className="pm4-reader-empty"><img className="pm4-reader-logo" src="/VIVLOGO.png" alt="VIV" /><h2>VIV Communications</h2><p>Select a message to read it and load the linked dossier context.</p></div>}
         </section>
 
         <aside className="pm4-dossier">
-          <div className="pm4-dossier-head"><div><strong>DOCKED DOSSIER</strong><span>{dossierLoading ? 'RESOLVING' : 'DOCKED'}</span></div><button onClick={() => openCrm('/contacts')}>Open</button></div>
+          <div className="pm4-dossier-head"><div><strong>LINKED DOSSIER</strong><span>{dossierLoading ? 'RESOLVING' : 'READY'}</span></div><button onClick={() => openCrm('/contacts')}>Open</button></div>
           {selectedEmail ? <div className="pm4-dossier-scroll">
-            <div className="pm4-person-card"><div className="pm4-avatar">{initials(senderName)}</div><div><h2>{senderName}</h2><p>{legacyContact.company_role || primaryRole?.role || (caliParty ? 'Known subject' : 'Unresolved origin')}</p><span className={caliParty ? 'linked' : 'unlinked'}>{caliParty ? 'IDENTITY RESOLVED' : 'UNRESOLVED'}</span></div></div>
+            <div className="pm4-person-card"><div className="pm4-avatar">{initials(senderName)}</div><div><h2>{senderName}</h2><p>{legacyContact.company_role || primaryRole?.role || (caliParty ? 'Known subject' : 'Unknown sender')}</p><span className={caliParty ? 'linked' : 'unlinked'}>{caliParty ? 'IDENTITY LINKED' : 'UNRESOLVED'}</span></div></div>
 
-            <div className="pm4-dossier-label">CANONICAL IDENTITY</div>
-            <div className="pm4-dossier-card"><div><span>Origin</span><strong>{primaryEmail || '-'}</strong></div><div><span>Line</span><strong>{primaryPhone || '-'}</strong></div><div><span>Affiliation</span><strong>{company || '-'}</strong></div></div>
+            <div className="pm4-dossier-label">IDENTITY</div>
+            <div className="pm4-dossier-card"><div><span>Email</span><strong>{primaryEmail || '-'}</strong></div><div><span>Phone</span><strong>{primaryPhone || '-'}</strong></div><div><span>Affiliation</span><strong>{company || '-'}</strong></div></div>
 
-            <div className="pm4-dossier-label">INTELLIGENCE STATE</div>
-            <div className="pm4-dossier-card"><div><span>Escalation</span><strong>{stage}</strong></div><div><span>Last signal</span><strong>{formatDate(lastContact) || 'Current signal'}</strong></div><div><span>Next command</span><strong>{nextAction}</strong></div><div><span>Verification</span><strong>{verification}</strong></div></div>
+            <div className="pm4-dossier-label">INTELLIGENCE CONTEXT</div>
+            <div className="pm4-dossier-card"><div><span>Relationship</span><strong>{stage}</strong></div><div><span>Last contact</span><strong>{formatDate(lastContact) || 'Current message'}</strong></div><div><span>Next follow-up</span><strong>{nextAction}</strong></div><div><span>Verification</span><strong>{verification}</strong></div></div>
 
-            <div className="pm4-dossier-label">EVENT TIMELINE</div>
-            <div className="pm4-activity-card">{recentTimeline.length ? recentTimeline.map((event, index) => <div key={event.message_id || index}><span className={`pm4-dot ${index === 0 ? 'green' : index === 1 ? 'blue' : 'purple'}`} /><div><strong>{event.title || `${event.direction || 'Signal'} event`}</strong><small>{formatDate(event.occurred_at)} - {event.direction || 'signal'}</small></div></div>) : <div><span className="pm4-dot blue" /><div><strong>{caliParty ? 'Canonical identity linked' : 'No event timeline yet'}</strong><small>{caliParty ? 'Subject resolved through VIV' : 'This origin will link when the signal is ingested'}</small></div></div>}</div>
+            <div className="pm4-dossier-label">TIMELINE</div>
+            <div className="pm4-activity-card">{recentTimeline.length ? recentTimeline.map((event, index) => <div key={event.message_id || index}><span className={`pm4-dot ${index === 0 ? 'green' : index === 1 ? 'blue' : 'purple'}`} /><div><strong>{event.title || `${event.direction || 'Message'} event`}</strong><small>{formatDate(event.occurred_at)} · {event.direction || 'message'}</small></div></div>) : <div><span className="pm4-dot blue" /><div><strong>{caliParty ? 'Identity linked to VIV' : 'No timeline yet'}</strong><small>{caliParty ? 'This sender is connected to a VIV dossier' : 'The sender can be linked when you choose to add them'}</small></div></div>}</div>
 
-            <div className="pm4-dossier-label">COMMANDS</div>
-            <div className="pm4-quick-actions"><button className="primary" onClick={() => openCrm('/contacts')}>Open Dossier</button><button onClick={() => openCrm('/contacts')}>Add Claim</button><button onClick={createEvent}>Event</button></div>
-            <div className="pm4-linked-banner">Signals + Dossiers + Event Grid linked <span>{crmOnline ? 'BRIDGED' : 'CHECK BRIDGE'}</span></div>
-          </div> : <div className="pm4-dossier-empty">Select a signal to load its VIV dossier.</div>}
+            <div className="pm4-dossier-label">ACTIONS</div>
+            <div className="pm4-quick-actions"><button className="primary" onClick={() => openCrm('/contacts')}>Open Dossier</button><button onClick={() => openCrm('/contacts')}>Add Note</button><button onClick={createEvent}>Add Event</button></div>
+            <div className="pm4-linked-banner">Communications + Dossiers + Timeline linked <span>{crmOnline ? 'LINKED' : 'CHECK LINK'}</span></div>
+          </div> : <div className="pm4-dossier-empty">Select a message to load its VIV dossier context.</div>}
         </aside>
       </main>
 
       {notice && <div className="pm4-notice" onClick={() => setNotice('')}>{notice}<button>x</button></div>}
 
-      {composeOpen && <div className="pm4-modal-backdrop" onMouseDown={() => setComposeOpen(false)}><form className="pm4-compose-modal" onSubmit={sendCompose} onMouseDown={event => event.stopPropagation()}><div className="pm4-compose-title"><strong>Compose Transmission</strong><button type="button" onClick={() => setComposeOpen(false)}>x</button></div><label>Origin<select value={compose.from_address} onChange={event => setCompose(prev => ({ ...prev, from_address: event.target.value }))}>{accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}</select></label><label>Target<input required value={compose.to} onChange={event => setCompose(prev => ({ ...prev, to: event.target.value }))} /></label><label>Brief<input value={compose.subject} onChange={event => setCompose(prev => ({ ...prev, subject: event.target.value }))} /></label><textarea value={compose.text} onChange={event => setCompose(prev => ({ ...prev, text: event.target.value }))} placeholder="Draft transmission..." /><div className="pm4-compose-footer"><button type="button" onClick={() => setComposeOpen(false)}>Stand Down</button><button type="submit" className="send">Execute Send</button></div></form></div>}
+      {composeOpen && <div className="pm4-modal-backdrop" onMouseDown={() => setComposeOpen(false)}><form className="pm4-compose-modal" onSubmit={sendCompose} onMouseDown={event => event.stopPropagation()}><div className="pm4-compose-title"><strong>Compose Message</strong><button type="button" onClick={() => setComposeOpen(false)}>x</button></div><label>From<select value={compose.from_address} onChange={event => setCompose(prev => ({ ...prev, from_address: event.target.value }))}>{accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}</select></label><label>To<input required value={compose.to} onChange={event => setCompose(prev => ({ ...prev, to: event.target.value }))} /></label><label>Subject<input value={compose.subject} onChange={event => setCompose(prev => ({ ...prev, subject: event.target.value }))} /></label><textarea value={compose.text} onChange={event => setCompose(prev => ({ ...prev, text: event.target.value }))} placeholder="Write message..." /><div className="pm4-compose-footer"><button type="button" onClick={() => setComposeOpen(false)}>Cancel</button><button type="submit" className="send">Send</button></div></form></div>}
     </div>
   );
 }
