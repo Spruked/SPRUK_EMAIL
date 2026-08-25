@@ -14,12 +14,22 @@ const BUSINESS_OPTIONS = [
   ['personal', 'Personal']
 ];
 
+const LIFECYCLE_LABELS = {
+  prospect: 'Horizon',
+  qualified: 'Evaluating',
+  contacted: 'Engaged',
+  meeting_scheduled: 'Active',
+  proposal: 'Advancing',
+  won: 'Established',
+  lost: 'Archive'
+};
+
 const DEFAULT_FOLDERS = ['inbox', 'drafts', 'sent', 'starred', 'archive', 'spam', 'trash'];
 const FOLDER_LABELS = {
   inbox: 'Inbox',
   drafts: 'Drafts',
   sent: 'Sent',
-  starred: 'Marked',
+  starred: 'Starred',
   archive: 'Archive',
   spam: 'Noise',
   trash: 'Trash',
@@ -105,7 +115,7 @@ function safeHtmlDocument(html = '') {
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus']
   });
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>html,body{margin:0;padding:0;background:#fff;color:#111827;font-family:Inter,Segoe UI,Arial,sans-serif;overflow-wrap:anywhere}body{padding:22px;line-height:1.48}img{max-width:100%;height:auto}table{max-width:100%}a{cursor:pointer;color:#2563eb}a[style],button[style]{max-width:100%}button{font:inherit}</style></head><body>${clean}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>*{box-sizing:border-box}html,body{margin:0;padding:0;width:100%;max-width:100%;overflow-x:hidden;background:#fff;color:#111827;font-family:Inter,Segoe UI,Arial,sans-serif;overflow-wrap:anywhere}body{padding:22px;line-height:1.48}img,video,svg{max-width:100%!important;height:auto}table{width:auto!important;max-width:100%!important;table-layout:fixed}td,th{max-width:100%;overflow-wrap:anywhere;word-break:break-word}pre{white-space:pre-wrap;word-break:break-word;max-width:100%;overflow-wrap:anywhere}a{cursor:pointer;color:#2563eb;overflow-wrap:anywhere}a[style],button[style]{max-width:100%}button{font:inherit}</style></head><body>${clean}</body></html>`;
 }
 
 function firstHttpLink(html = '') {
@@ -388,7 +398,8 @@ export default function PrimeMailV4() {
 
   const activeBusinessLabel = BUSINESS_OPTIONS.find(([id]) => id === businessScope)?.[1] || businessScope;
   const recentTimeline = caliTimeline.slice(0, 3);
-  const stage = legacyContact.crm_stage || primaryRole?.role || (caliParty ? 'Known' : 'Unknown');
+  const rawLifecycle = String(legacyContact.crm_stage || '').trim();
+  const stage = rawLifecycle ? (LIFECYCLE_LABELS[rawLifecycle] || rawLifecycle.replaceAll('_', ' ')) : (primaryRole?.role || (caliParty ? 'Known' : 'Unknown'));
   const lastContact = legacyContact.last_contacted_at || caliDossier?.latest_message?.occurred_at || selectedEmail?.date;
   const nextAction = legacyContact.next_follow_up_at || '-';
   const verification = caliParty?.verification_state || identities.email?.[0]?.verification_state || 'unverified';
@@ -434,7 +445,7 @@ export default function PrimeMailV4() {
         <section className="pm4-list-panel">
           <div className="pm4-list-head"><div><h2>{folderLabel(currentFolder)}</h2><span>{emails.length} messages</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="desc">Newest First</option><option value="asc">Oldest First</option></select><button onClick={fetchEmails}>Refresh</button></div></div>
           <div className="pm4-message-scroll">
-            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{folderLabel(email.folder || currentFolder)}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Clear importance mark' : 'Mark important'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
+            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{folderLabel(email.folder || currentFolder)}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Remove star' : 'Star message'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
             {!sortedEmails.length && <div className="pm4-empty">No messages in this folder.</div>}
           </div>
         </section>
@@ -444,7 +455,7 @@ export default function PrimeMailV4() {
             <div className="pm4-reader-head"><h1>{selectedEmail.subject || '(No subject)'}</h1><div className="pm4-meta"><span>From</span><strong>{selectedEmail.sender}</strong><span>To</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
             {actionLink && <div className="pm4-security"><div><strong>External verification link detected</strong><small>This message contains an external identity-confirmation link.</small></div><button onClick={() => window.open(actionLink, '_blank', 'noopener,noreferrer')}>Open →</button></div>}
             <div className="pm4-reader-body">{selectedEmail.html_body ? <ReaderFrame html={selectedEmail.html_body} /> : <pre>{cleanText(selectedEmail.text_body || '')}</pre>}</div>
-            <div className="pm4-reader-actions"><button onClick={reply}>Reply</button><button onClick={forward}>Forward</button><button onClick={archiveSelected}>Archive</button><button onClick={event => toggleStar(event, selectedEmail)}>{selectedEmail.starred ? 'Unmark' : 'Mark'}</button><button className="danger" onClick={deleteSelected}>Delete</button><button onClick={snoozeSelected}>Snooze</button><button className="event" onClick={createEvent}>+ Event</button></div>
+            <div className="pm4-reader-actions"><button onClick={reply}>Reply</button><button onClick={forward}>Forward</button><button onClick={archiveSelected}>Archive</button><button onClick={event => toggleStar(event, selectedEmail)}>{selectedEmail.starred ? 'Unstar' : 'Star'}</button><button className="danger" onClick={deleteSelected}>Delete</button><button onClick={snoozeSelected}>Snooze</button><button className="event" onClick={createEvent}>+ Event</button></div>
           </> : <div className="pm4-reader-empty"><img className="pm4-reader-logo" src="/VIVLOGO.png" alt="VIV" /><h2>VIV Communications</h2><p>Select a message to read it and load the linked dossier context.</p></div>}
         </section>
 
