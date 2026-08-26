@@ -46,7 +46,7 @@ FastAPI on 127.0.0.1:19000
 
 ## Primary capabilities
 
-- Multi-account inbox and sent-mail views
+- Site-aware inbox and sent-mail views
 - Read, compose, reply, forward, star, archive, trash, drafts, and search
 - Sandboxed/contained HTML email reader
 - Local message custody and raw-message preservation
@@ -57,6 +57,32 @@ FastAPI on 127.0.0.1:19000
 - Shared canonical contact substrate rather than duplicate CRM/contact databases
 - Startup tray supervisor and Windows login autostart
 - Public Cloudflare Access entrypoint at `mail.spruked.com`
+
+## Mailbox authority and site sorting
+
+The currently established production mailbox is:
+
+```text
+bryan@spruked.com
+```
+
+That address is the default **primary sender** unless `PRIMARY_EMAIL_ACCOUNT` is explicitly changed.
+
+Earlier builds pre-seeded planned addresses for several sites. Those planned scaffold accounts are no longer treated as active merely because they exist in the registry. Legacy scaffold accounts other than the primary are moved to `pending`; an account explicitly added later through the registry remains active.
+
+The mailbox/site presentation order is:
+
+```text
+1. Spruked
+2. TrueMark Mint
+3. CertSig
+4. Alpha CertSig
+5. Other sites
+```
+
+The V4 message list defaults to **By Site**, with newest mail first inside each site. Historical mail is not deleted when an inactive planned mailbox is moved to pending; active-mailbox authority and UI presentation are changed without rewriting the mail record.
+
+When **All Sites** is selected, composing still uses the backend-declared primary sender rather than whichever domain happens to sort first alphabetically.
 
 ## Repository layout
 
@@ -69,7 +95,7 @@ SPRUK_EMAIL/
 │   ├── cali_bridge_routes.py     # VIV/CALI compatibility integration routes
 │   ├── custody_routes.py         # raw-message custody path
 │   ├── contact_candidate_routes.py
-│   ├── registry_routes.py
+│   ├── registry_routes.py        # site/account registry and primary-account policy
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/PrimeMailV4.js        # current VIV Communications client
@@ -177,14 +203,14 @@ Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\frontend"
 npm run build
 ```
 
-### Normal application launch
+### Normal application launch on port 19000
 
 ```powershell
 Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email"
 .\start_prime_mail.bat
 ```
 
-The launcher registers the current installation, starts the tray supervisor, ensures the frontend build is available, and starts the backend on port `19000`.
+The launcher registers the current installation, starts the tray supervisor, ensures the frontend build is available, and starts the backend on port `19000`. Normal use can remain on port `19000`; port `3000` is only the optional React development server.
 
 ### Direct backend validation
 
@@ -193,7 +219,7 @@ Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
 & ".\venv\Scripts\python.exe" app.py
 ```
 
-Expected backend/API URL:
+Expected backend/application URL:
 
 ```text
 http://127.0.0.1:19000/
@@ -258,7 +284,7 @@ Legacy `Prime Mail`, `CALI CRM`, and related names may still appear internally i
 
 ## Development status — 2026-08-26
 
-The `prime-mail-v4` branch contains the VIV Communications identity conversion, VIV dossier bridge, business-context handoff, deep-link integration, HTML reader containment, human-governed unknown-source promotion, and revised Windows startup/tray registration.
+The `prime-mail-v4` branch contains the VIV Communications identity conversion, VIV dossier bridge, business-context handoff, deep-link integration, HTML reader containment, human-governed unknown-source promotion, revised Windows startup/tray registration, Spruked-first mailbox authority, and site-based mail sorting.
 
 During local acceptance on 2026-08-26, four regressions/configuration mismatches were isolated in the composition/startup layer rather than the long-running mail authority itself:
 
@@ -267,6 +293,8 @@ During local acceptance on 2026-08-26, four regressions/configuration mismatches
 3. the legacy SPA catch-all could precede newly composed GET API routes and return HTML where JSON was expected;
 4. the React development frontend on port `3000` had relative `/api` calls but no CRA proxy, allowing API requests to fall back to the frontend HTML server instead of the backend on port `19000`.
 
-Source corrections for all four are implemented. Runtime re-verification of restored inbox history, unknown-source review, local auto-start, port `3000` development behavior, and the public authenticated path is still required before calling the incident fully verified.
+Source corrections for all four are implemented. The active mailbox policy has also been corrected so planned site addresses cannot displace `bryan@spruked.com` as the primary sender merely because of alphabetical registry order.
+
+Runtime re-verification of restored inbox history, unknown-source review, site sorting, local auto-start, port `3000` development behavior, and the public authenticated path is still required before calling the incident fully verified.
 
 See `dev.log` for the detailed engineering history and verification state.
