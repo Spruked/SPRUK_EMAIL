@@ -20,7 +20,7 @@ $backendBatch = Join-Path $root 'start_backend.bat'
 $frontendDir = Join-Path $root 'frontend'
 $buildIndex = Join-Path $frontendDir 'build\index.html'
 $iconPath = Join-Path $root 'frontend\public\redVIVlogo.png'
-$logDir = Join-Path $env:LOCALAPPDATA 'PrimeMail'
+$logDir = Join-Path $env:LOCALAPPDATA 'VIVCommunications'
 $logFile = Join-Path $logDir 'tray.log'
 $port = 19000
 $uri = 'http://127.0.0.1:19000'
@@ -86,7 +86,7 @@ function Ensure-FrontendBuild {
     return (Test-Path -LiteralPath $buildIndex)
   }
 
-  Write-TrayLog 'Building VIV Mail frontend.'
+  Write-TrayLog 'Building VIV Communications frontend.'
   Push-Location $frontendDir
   try {
     & $npm.Source run build *>> $logFile
@@ -111,7 +111,7 @@ function Start-MailBackend {
     return
   }
 
-  Write-TrayLog 'Starting VIV Mail backend.'
+  Write-TrayLog 'Starting VIV Communications backend.'
   Start-Process -FilePath $env:ComSpec `
     -ArgumentList @('/c', ('"{0}"' -f $backendBatch)) `
     -WorkingDirectory $root `
@@ -127,13 +127,13 @@ function Stop-MailBackend {
           Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
         }
       }
-    Write-TrayLog 'Stopped VIV Mail backend listener.'
+    Write-TrayLog 'Stopped VIV Communications backend listener.'
   } catch {
     Write-TrayLog "Stop backend failed: $($_.Exception.Message)"
   }
 }
 
-function Open-PrimeMail {
+function Open-VIVCommunications {
   try { Start-Process $uri | Out-Null } catch { Write-TrayLog "Open browser failed: $($_.Exception.Message)" }
 }
 
@@ -145,7 +145,7 @@ if ($trayIcon) {
 } else {
   $notify.Icon = [System.Drawing.SystemIcons]::Application
 }
-$notify.Text = 'VIV Mail'
+$notify.Text = 'VIV Communications'
 $notify.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -153,11 +153,11 @@ $statusItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $statusItem.Enabled = $false
 [void]$menu.Items.Add($statusItem)
 
-$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open VIV Mail')
-$openItem.Add_Click({ Open-PrimeMail })
+$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open VIV Communications')
+$openItem.Add_Click({ Open-VIVCommunications })
 [void]$menu.Items.Add($openItem)
 
-$restartItem = New-Object System.Windows.Forms.ToolStripMenuItem('Restart VIV Mail')
+$restartItem = New-Object System.Windows.Forms.ToolStripMenuItem('Restart VIV Communications')
 $restartItem.Add_Click({
   Stop-MailBackend
   Start-Sleep -Milliseconds 750
@@ -172,7 +172,7 @@ $logsItem.Add_Click({
 [void]$menu.Items.Add($logsItem)
 
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-$stopItem = New-Object System.Windows.Forms.ToolStripMenuItem('Stop VIV Mail')
+$stopItem = New-Object System.Windows.Forms.ToolStripMenuItem('Stop VIV Communications')
 $stopItem.Add_Click({ Stop-MailBackend })
 [void]$menu.Items.Add($stopItem)
 
@@ -184,15 +184,15 @@ $exitItem.Add_Click({
 [void]$menu.Items.Add($exitItem)
 
 $notify.ContextMenuStrip = $menu
-$notify.Add_DoubleClick({ Open-PrimeMail })
+$notify.Add_DoubleClick({ Open-VIVCommunications })
 
 function Update-Status {
   if (Test-MailPort) {
     $statusItem.Text = 'Status: running on 19000'
-    $notify.Text = 'VIV Mail - running'
+    $notify.Text = 'VIV Communications - running'
   } else {
     $statusItem.Text = 'Status: stopped'
-    $notify.Text = 'VIV Mail - stopped'
+    $notify.Text = 'VIV Communications - stopped'
   }
 }
 
