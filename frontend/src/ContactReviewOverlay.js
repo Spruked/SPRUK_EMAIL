@@ -3,6 +3,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 const API_BASE = (process.env.REACT_APP_API_BASE || '/api').replace(/\/$/, '');
 const REVIEW_SEEN_KEY = 'viv_communications_contact_review_seen';
 const LEGACY_REVIEW_SEEN_KEY = 'prime_mail_contact_review_seen';
+const BUSINESS_SCOPE_KEY = 'viv_communications_business_scope';
+const LEGACY_BUSINESS_SCOPE_KEY = 'prime_mail_business_scope';
+
+function activeBusinessScope() {
+  const scope = localStorage.getItem(BUSINESS_SCOPE_KEY) || localStorage.getItem(LEGACY_BUSINESS_SCOPE_KEY) || 'personal';
+  return scope === 'all' ? 'personal' : scope;
+}
 
 export default function ContactReviewOverlay() {
   const [candidates, setCandidates] = useState([]);
@@ -59,8 +66,9 @@ export default function ContactReviewOverlay() {
     try {
       let linked = 0;
       let pending = 0;
+      const businessScope = activeBusinessScope();
       for (const candidate of selectedCandidates) {
-        const response = await fetch(`${API_BASE}/contacts`, {
+        const saveResponse = await fetch(`${API_BASE}/contacts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -68,12 +76,20 @@ export default function ContactReviewOverlay() {
             email: candidate.email,
             contact_type: 'contact',
             crm_stage: null,
-            sync_crm: true
+            sync_crm: false
           })
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || `Could not save ${candidate.email}`);
-        if (data?.crm_sync?.status === 'linked') linked += 1;
+        const saved = await saveResponse.json().catch(() => ({}));
+        if (!saveResponse.ok) throw new Error(saved.detail || `Could not save ${candidate.email}`);
+
+        const promoteResponse = await fetch(`${API_BASE}/integrations/viv/promote-contact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: candidate.email, business_scope: businessScope })
+        });
+        const promoted = await promoteResponse.json().catch(() => ({}));
+        if (!promoteResponse.ok) throw new Error(promoted.detail || `Could not link ${candidate.email} to VIV`);
+        if (promoted.status === 'linked') linked += 1;
         else pending += 1;
       }
       setSelected({});
