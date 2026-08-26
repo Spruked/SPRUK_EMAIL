@@ -2,7 +2,7 @@
 
 **VIV Communications is the local-first email and communications surface for VIV — Vector Intelligence Vault.**
 
-It stores the authoritative mail record locally on the R: drive, serves the browser client from the local FastAPI service on port `19000`, and integrates approved people and correspondence with canonical VIV dossiers.
+It stores the authoritative mail record locally on the R: drive, serves the backend/API from FastAPI on port `19000`, and integrates approved people and correspondence with canonical VIV dossiers. During development, the React client may run separately on port `3000`.
 
 Public access is intended through the configured Cloudflare tunnel / Access layer at `https://mail.spruked.com/`, where the authentication screen appears before the local VIV Communications application is exposed.
 
@@ -25,7 +25,7 @@ Cloudflare Email Routing / Worker
 Authenticated tunnel / webhook path
       |
       v
-VIV Communications backend
+VIV Communications backend / API
 FastAPI on 127.0.0.1:19000
       |
       +--> R:\email_client\emails.db
@@ -38,8 +38,10 @@ FastAPI on 127.0.0.1:19000
       |       +--> business context
       |       +--> relationship intelligence
       |
-      v
-React VIV Communications UI
+      +--> production built React UI may be served by FastAPI
+      |
+      +--> development React UI may run on 127.0.0.1:3000
+             and proxy /api to 127.0.0.1:19000
 ```
 
 ## Primary capabilities
@@ -155,6 +157,19 @@ Unexpected token '<', "<!DOCTYPE ..." is not valid JSON
 
 ## Build and launch
 
+### Development frontend on port 3000
+
+The React development client uses Create React App, so `npm start` runs on port `3000` by default. The frontend uses relative `/api` routes, so `frontend/package.json` contains a development proxy to `http://127.0.0.1:19000`.
+
+Run it only from the frontend directory:
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\frontend"
+npm start
+```
+
+If `npm` reports `ENOENT` / `package.json` not found, the command was run from the wrong directory, such as `backend\`.
+
 ### Frontend validation/build
 
 ```powershell
@@ -178,10 +193,16 @@ Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
 & ".\venv\Scripts\python.exe" app.py
 ```
 
-Expected local application URL:
+Expected backend/API URL:
 
 ```text
 http://127.0.0.1:19000/
+```
+
+Expected development frontend URL when `npm start` is running:
+
+```text
+http://127.0.0.1:3000/
 ```
 
 Expected public authenticated entrypoint:
@@ -198,6 +219,7 @@ Useful checks:
 
 ```powershell
 Get-NetTCPConnection -LocalPort 19000 -State Listen -ErrorAction SilentlyContinue
+Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
 Get-Content "$env:LOCALAPPDATA\PrimeMail\tray.log" -Tail 100
 Get-Content "$env:LOCALAPPDATA\PrimeMail\backend.log" -Tail 100
 ```
@@ -238,12 +260,13 @@ Legacy `Prime Mail`, `CALI CRM`, and related names may still appear internally i
 
 The `prime-mail-v4` branch contains the VIV Communications identity conversion, VIV dossier bridge, business-context handoff, deep-link integration, HTML reader containment, human-governed unknown-source promotion, and revised Windows startup/tray registration.
 
-During local acceptance on 2026-08-26, three regressions were isolated in the composition/startup layer rather than the long-running mail authority itself:
+During local acceptance on 2026-08-26, four regressions/configuration mismatches were isolated in the composition/startup layer rather than the long-running mail authority itself:
 
 1. a root-level Python environment without FastAPI was selected during manual validation;
 2. a manual V4 launch could inherit the wrong database fallback unless canonical mail/VIV paths were established before importing `main.py`;
-3. the legacy SPA catch-all could precede newly composed GET API routes and return HTML where JSON was expected.
+3. the legacy SPA catch-all could precede newly composed GET API routes and return HTML where JSON was expected;
+4. the React development frontend on port `3000` had relative `/api` calls but no CRA proxy, allowing API requests to fall back to the frontend HTML server instead of the backend on port `19000`.
 
-Source corrections for all three are implemented. Runtime re-verification of restored inbox history, unknown-source review, local auto-start, and the public authenticated path is still required before calling the incident fully verified.
+Source corrections for all four are implemented. Runtime re-verification of restored inbox history, unknown-source review, local auto-start, port `3000` development behavior, and the public authenticated path is still required before calling the incident fully verified.
 
 See `dev.log` for the detailed engineering history and verification state.
