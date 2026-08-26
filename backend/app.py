@@ -1,5 +1,25 @@
 from __future__ import annotations
 
+import os
+
+# VIV Communications has two separate persistent stores: the mail authority and
+# the shared VIV dossier/contact substrate. These defaults must be established
+# before importing the legacy compatibility module because main.py initializes
+# SQLite during import. Manual launches therefore resolve to the same stores as
+# the Windows tray/auto-start launcher instead of accidentally opening a new or
+# unrelated database.
+os.environ.setdefault("EMAIL_DB_PATH", r"R:\email_client\emails.db")
+os.environ.setdefault(
+    "CALI_DB_PATH",
+    r"R:\Substrate_Vault_R\vaults\r_drive_system_records\crm\memory\cali_personal.db",
+)
+os.environ.setdefault("EMAIL_ATTACHMENTS_DIR", r"R:\email_client\attachments")
+os.environ.setdefault("PRIME_MAIL_RAW_VAULT", r"R:\email_client\vault\raw_email")
+os.environ.setdefault(
+    "CALI_CRM_PROJECT_ROOT",
+    r"C:\dev\Desktop\PLATFORM\SPRUKED_CRM_MASTER_2026-05-05",
+)
+
 import main as legacy
 from cali_bridge_routes import ensure_handoff_schema, router as cali_bridge_router
 from contact_candidate_routes import router as contact_candidate_router
@@ -35,6 +55,24 @@ app.include_router(cali_bridge_router)
 app.include_router(contact_candidate_router)
 app.include_router(custody_router)
 app.include_router(viv_dossier_router)
+
+# main.py registers the SPA catch-all while it is imported. Routers added by this
+# V4 composition layer come later, so a GET such as /api/contact-candidates could
+# otherwise be swallowed by /{full_path:path} and receive index.html. Keep the SPA
+# fallback last so every concrete API route wins first.
+def _defer_spa_catch_all() -> None:
+    catch_all = []
+    concrete = []
+    for route in app.router.routes:
+        if getattr(route, "path", "") == "/{full_path:path}":
+            catch_all.append(route)
+        else:
+            concrete.append(route)
+    if catch_all:
+        app.router.routes[:] = concrete + catch_all
+
+
+_defer_spa_catch_all()
 
 # The V4 reader isolates decoded message HTML in a sandboxed iframe. Preserve the
 # decoded HTML at ingestion instead of destructively stripping tables/styles so
@@ -78,6 +116,10 @@ for index, route in enumerate(list(app.router.routes)):
     if getattr(route, "endpoint", None) is receive_email_with_custody:
         app.router.routes.insert(0, app.router.routes.pop(index))
         break
+
+# Moving the custody route above the legacy receiver must not pull the SPA fallback
+# forward. Re-assert the route-order invariant after any route manipulation.
+_defer_spa_catch_all()
 
 # Prime persistent registries before the first request so legacy send/draft/folder
 # routes honor dynamically added accounts and VIV handoffs always have a queue.
