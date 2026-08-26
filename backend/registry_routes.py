@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,12 @@ KNOWN_BUSINESS_DOMAINS = {
     "certsig.com": "certsig",
     "alphacertsig.com": "alpha_certsig",
 }
+DEFAULT_PRIMARY_ACCOUNT = "bryan@spruked.com"
+
+
+def _primary_account() -> str:
+    configured = legacy.normalize_email(os.getenv("PRIMARY_EMAIL_ACCOUNT", DEFAULT_PRIMARY_ACCOUNT))
+    return configured or DEFAULT_PRIMARY_ACCOUNT
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -128,6 +135,35 @@ def _seed_account(conn: sqlite3.Connection, email: str, display_name: Optional[s
         )
 
 
+def _apply_primary_account_policy(conn: sqlite3.Connection) -> None:
+    """Keep the real Spruked mailbox primary while leaving future sites opt-in.
+
+    Earlier builds seeded several planned addresses as if they were active mailboxes.
+    Only legacy-scaffold rows are demoted here. An account explicitly added later via
+    the registry receives a different config_ref and remains active.
+    """
+
+    primary = _primary_account()
+    _seed_account(conn, primary, primary)
+    conn.execute(
+        """
+        UPDATE mail_account
+        SET status='pending'
+        WHERE config_ref='legacy-or-cloudflare-config'
+          AND lower(local_part || '@' || domain_id) <> ?
+        """,
+        (primary,),
+    )
+    conn.execute(
+        """
+        UPDATE mail_account
+        SET status='active'
+        WHERE lower(local_part || '@' || domain_id) = ?
+        """,
+        (primary,),
+    )
+
+
 def seed_registry_from_legacy_accounts() -> None:
     ensure_registry_schema()
     legacy_accounts = list(legacy.ACCOUNTS)
@@ -136,6 +172,7 @@ def seed_registry_from_legacy_accounts() -> None:
         if count == 0:
             for account in legacy_accounts:
                 _seed_account(conn, str(account.get("email") or ""), str(account.get("label") or "") or None)
+        _apply_primary_account_policy(conn)
         conn.commit()
 
 
@@ -149,6 +186,7 @@ def sync_legacy_account_globals() -> None:
     """
 
     seed_registry_from_legacy_accounts()
+    primary = _primary_account()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -156,10 +194,21 @@ def sync_legacy_account_globals() -> None:
             FROM mail_account a
             JOIN mail_domain d ON d.domain_id=a.domain_id
             WHERE a.status='active' AND d.status='active'
-            ORDER BY d.domain COLLATE NOCASE, a.local_part COLLATE NOCASE
-            """
+            ORDER BY
+              CASE WHEN lower(a.local_part || '@' || d.domain) = ? THEN 0 ELSE 1 END,
+              CASE d.business_scope
+                WHEN 'spruked' THEN 0
+                WHEN 'truemark_mint' THEN 1
+                WHEN 'certsig' THEN 2
+                WHEN 'alpha_certsig' THEN 3
+                ELSE 9
+              END,
+              d.domain COLLATE NOCASE,
+              a.local_part COLLATE NOCASE
+            """,
+            (primary,),
         ).fetchall()
-    accounts: List[Dict[str, str]] = []
+    accounts: List[Dict[str, Any]] = []
     for row in rows:
         email = f"{row['local_part']}@{row['domain']}".lower()
         accounts.append(
@@ -170,6 +219,7 @@ def sync_legacy_account_globals() -> None:
                 "label": str(row["display_name"] or email),
                 "account_id": str(row["account_id"]),
                 "business_scope": str(row["business_scope"] or ""),
+                "is_primary": email == primary,
             }
         )
     legacy.ACCOUNTS[:] = accounts
@@ -203,7 +253,8 @@ def list_domains() -> Dict[str, Any]:
             SELECT domain_id, domain, business_scope, status
             FROM mail_domain
             WHERE status='active'
-            ORDER BY domain COLLATE NOCASE
+            ORDER BY CASE business_scope WHEN 'spruked' THEN 0 WHEN 'truemark_mint' THEN 1 WHEN 'certsig' THEN 2 WHEN 'alpha_certsig' THEN 3 ELSE 9 END,
+                     domain COLLATE NOCASE
             """
         ).fetchall()
         result = []
@@ -224,12 +275,13 @@ def list_domains() -> Dict[str, Any]:
                         {
                             **dict(account),
                             "email": f"{account['local_part']}@{domain_row['domain']}",
+                            "is_primary": f"{account['local_part']}@{domain_row['domain']}".lower() == _primary_account(),
                         }
                         for account in accounts
                     ],
                 }
             )
-    return {"domains": result}
+    return {"domains": result, "primary_account": _primary_account()}
 
 
 @router.post("/domains")
@@ -299,6 +351,7 @@ def add_account(payload: AccountCreate) -> Dict[str, Any]:
         "email": email,
         "domain": domain,
         "business_scope": business_scope,
+        "is_primary": email == _primary_account(),
         "status": "active",
     }
 
@@ -344,7 +397,8 @@ def registry_folders(account: Optional[str] = None) -> Dict[str, Any]:
                 JOIN mail_account a ON a.account_id=m.account_id
                 JOIN mail_domain d ON d.domain_id=a.domain_id
                 WHERE a.status='active'
-                ORDER BY d.domain COLLATE NOCASE, a.local_part COLLATE NOCASE,
+                ORDER BY CASE d.business_scope WHEN 'spruked' THEN 0 WHEN 'truemark_mint' THEN 1 WHEN 'certsig' THEN 2 WHEN 'alpha_certsig' THEN 3 ELSE 9 END,
+                         d.domain COLLATE NOCASE, a.local_part COLLATE NOCASE,
                          CASE m.mailbox_type WHEN 'standard' THEN 0 ELSE 1 END, m.name COLLATE NOCASE
                 """
             ).fetchall()
