@@ -14,6 +14,14 @@ const BUSINESS_OPTIONS = [
   ['personal', 'Personal']
 ];
 
+const SITE_LABELS = {
+  'spruked.com': 'Spruked',
+  'truemarkmint.com': 'TrueMark Mint',
+  'certsig.com': 'CertSig',
+  'alphacertsig.com': 'Alpha CertSig'
+};
+const SITE_ORDER = ['spruked.com', 'truemarkmint.com', 'certsig.com', 'alphacertsig.com'];
+
 const LIFECYCLE_LABELS = {
   prospect: 'Horizon',
   qualified: 'Evaluating',
@@ -46,6 +54,23 @@ function extractEmail(value = '') {
   if (match?.[1]) return match[1].trim().toLowerCase();
   const plain = String(value).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   return (plain?.[0] || String(value)).trim().toLowerCase();
+}
+
+function siteDomain(value = '') {
+  const address = extractEmail(value);
+  return address.includes('@') ? address.split('@').pop().toLowerCase() : '';
+}
+
+function siteLabel(value = '') {
+  const domain = siteDomain(value);
+  if (!domain) return 'Other';
+  return SITE_LABELS[domain] || domain;
+}
+
+function siteRank(value = '') {
+  const domain = siteDomain(value);
+  const rank = SITE_ORDER.indexOf(domain);
+  return rank >= 0 ? rank : SITE_ORDER.length;
 }
 
 function displayName(value = '') {
@@ -144,6 +169,7 @@ export default function PrimeMailV4() {
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [defaultAccount, setDefaultAccount] = useState('');
   const [folders, setFolders] = useState([]);
   const [stats, setStats] = useState({});
   const [integrations, setIntegrations] = useState({});
@@ -151,7 +177,7 @@ export default function PrimeMailV4() {
   const [currentFolder, setCurrentFolder] = useState(() => startupParams.get('folder') || 'inbox');
   const [businessScope, setBusinessScope] = useState(() => startupParams.get('business_scope') || localStorage.getItem('viv_communications_business_scope') || localStorage.getItem('prime_mail_business_scope') || 'spruked');
   const [search, setSearch] = useState(() => startupParams.get('contact') || '');
-  const [sortOrder, setSortOrder] = useState('desc');
+  const [sortOrder, setSortOrder] = useState('site');
   const [composeOpen, setComposeOpen] = useState(false);
   const [compose, setCompose] = useState({ from_address: '', to: '', subject: '', text: '' });
   const [notice, setNotice] = useState('');
@@ -162,7 +188,8 @@ export default function PrimeMailV4() {
   const [dossierLoading, setDossierLoading] = useState(false);
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
 
-  const selectedAccount = currentAccount === 'all' ? (accounts[0]?.email || '') : currentAccount;
+  const selectedAccount = currentAccount === 'all' ? (defaultAccount || accounts.find(account => account.is_primary)?.email || accounts[0]?.email || '') : currentAccount;
+  const mailboxLabel = currentAccount === 'all' ? 'All Sites' : `${siteLabel(currentAccount)} · ${currentAccount}`;
   const vivOnline = Boolean(integrations?.crm?.online || integrations?.crm_api?.status === 'ok' || integrations?.crm_db?.status === 'ok');
   const calendarOnline = integrations?.calendar?.online ?? vivOnline;
   const selectedSenderEmail = extractEmail(selectedEmail?.sender || '');
@@ -202,10 +229,11 @@ export default function PrimeMailV4() {
     const integrationCall = requestJson(`${API_BASE}/integrations/status`).catch(() => ({}));
     const [accountData, folderData, statsData, integrationData] = await Promise.all([accountCall, folderCall, statsCall, integrationCall]);
     setAccounts(accountData.accounts || []);
+    setDefaultAccount(accountData.default_account || accountData.accounts?.find(account => account.is_primary)?.email || accountData.accounts?.[0]?.email || '');
     setFolders(folderData.folders || []);
     setStats(statsData || {});
     setIntegrations(integrationData || {});
-    setCompose(prev => ({ ...prev, from_address: prev.from_address || accountData.default_account || accountData.accounts?.[0]?.email || '' }));
+    setCompose(prev => ({ ...prev, from_address: prev.from_address || accountData.default_account || accountData.accounts?.find(account => account.is_primary)?.email || accountData.accounts?.[0]?.email || '' }));
   }, [currentAccount, requestJson]);
 
   useEffect(() => {
@@ -225,6 +253,15 @@ export default function PrimeMailV4() {
     return [...emails].sort((a, b) => {
       const left = new Date(a.date || 0).getTime();
       const right = new Date(b.date || 0).getTime();
+      if (sortOrder === 'site') {
+        const leftRecipient = a.recipient || a.sender || '';
+        const rightRecipient = b.recipient || b.sender || '';
+        const rankDelta = siteRank(leftRecipient) - siteRank(rightRecipient);
+        if (rankDelta) return rankDelta;
+        const labelDelta = siteLabel(leftRecipient).localeCompare(siteLabel(rightRecipient));
+        if (labelDelta) return labelDelta;
+        return right - left;
+      }
       return sortOrder === 'asc' ? left - right : right - left;
     });
   }, [emails, sortOrder]);
@@ -434,8 +471,8 @@ export default function PrimeMailV4() {
         <div className="pm4-brand"><img className="pm4-brand-logo" src="/VIVLOGO.png" alt="VIV" /><strong>VIV Communications</strong></div>
         <div className="pm4-search-wrap"><span>Search</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Sender, subject, or message text..." /></div>
         <select className="pm4-account-select" value={currentAccount} onChange={event => { setCurrentAccount(event.target.value); setSelectedEmail(null); }}>
-          <option value="all">All Accounts</option>
-          {accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}
+          <option value="all">All Sites</option>
+          {accounts.map(account => <option key={account.email} value={account.email}>{siteLabel(account.email)} · {account.email}{account.is_primary ? ' (Primary)' : ''}</option>)}
         </select>
         <button className="pm4-btn pm4-green" onClick={() => openCompose()}>Compose</button>
         <button className="pm4-btn pm4-blue" onClick={callOrb}>ORB</button>
@@ -451,7 +488,7 @@ export default function PrimeMailV4() {
           <div className="pm4-workspace"><button className="active">Mail</button><button onClick={() => openVIV('/contacts')}>Dossiers</button><button onClick={() => openVIV('/activities')}>Timeline</button></div>
 
           <div className="pm4-label">MAILBOXES</div>
-          <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{selectedAccount || 'All Accounts'}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread messages · {currentAccount === 'all' ? 'All accounts' : 'Active account'}</small></div></div>
+          <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{mailboxLabel}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread messages · {currentAccount === 'all' ? `Primary sender: ${selectedAccount || 'not configured'}` : 'Active site mailbox'}</small></div></div>
 
           <div className="pm4-label">FOLDERS</div>
           <nav className="pm4-folders">
@@ -467,9 +504,9 @@ export default function PrimeMailV4() {
         </aside>
 
         <section className="pm4-list-panel">
-          <div className="pm4-list-head"><div><h2>{folderLabel(currentFolder)}</h2><span>{emails.length} messages</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="desc">Newest First</option><option value="asc">Oldest First</option></select><button onClick={fetchEmails}>Refresh</button></div></div>
+          <div className="pm4-list-head"><div><h2>{folderLabel(currentFolder)}</h2><span>{emails.length} messages</span></div><div><select value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="site">By Site</option><option value="desc">Newest First</option><option value="asc">Oldest First</option></select><button onClick={fetchEmails}>Refresh</button></div></div>
           <div className="pm4-message-scroll">
-            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{folderLabel(email.folder || currentFolder)}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Remove star' : 'Star message'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
+            {sortedEmails.map(email => <article key={email.id} className={`pm4-message ${selectedEmail?.id === email.id ? 'selected' : ''} ${!email.read ? 'unread' : ''}`} onClick={() => openEmail(email)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') openEmail(email); }}><div><strong>{displayName(email.sender)}</strong><time>{formatDate(email.date, true)}</time></div><h3>{email.subject || '(No subject)'}</h3><p>{cleanText(email.text_body || email.html_body || '').slice(0, 92) || 'HTML message'}</p><div className="pm4-message-foot"><span>{siteLabel(email.recipient || email.sender)} · {folderLabel(email.folder || currentFolder)}</span>{!String(email.id).startsWith('sent_') && <button className={email.starred ? 'pm4-star starred' : 'pm4-star'} onClick={event => toggleStar(event, email)} aria-label={email.starred ? 'Remove star' : 'Star message'}>{email.starred ? <img className="pm4-importance-logo" src="/redVIVlogo.png" alt="" /> : <span className="pm4-star-empty" />}</button>}</div></article>)}
             {!sortedEmails.length && <div className="pm4-empty">No messages in this folder.</div>}
           </div>
         </section>
@@ -506,7 +543,7 @@ export default function PrimeMailV4() {
 
       {notice && <div className="pm4-notice" onClick={() => setNotice('')}>{notice}<button>x</button></div>}
 
-      {composeOpen && <div className="pm4-modal-backdrop" onMouseDown={() => setComposeOpen(false)}><form className="pm4-compose-modal" onSubmit={sendCompose} onMouseDown={event => event.stopPropagation()}><div className="pm4-compose-title"><strong>Compose Message</strong><button type="button" onClick={() => setComposeOpen(false)}>x</button></div><label>From<select value={compose.from_address} onChange={event => setCompose(prev => ({ ...prev, from_address: event.target.value }))}>{accounts.map(account => <option key={account.email} value={account.email}>{account.email}</option>)}</select></label><label>To<input required value={compose.to} onChange={event => setCompose(prev => ({ ...prev, to: event.target.value }))} /></label><label>Subject<input value={compose.subject} onChange={event => setCompose(prev => ({ ...prev, subject: event.target.value }))} /></label><textarea value={compose.text} onChange={event => setCompose(prev => ({ ...prev, text: event.target.value }))} placeholder="Write message..." /><div className="pm4-compose-footer"><button type="button" onClick={() => setComposeOpen(false)}>Cancel</button><button type="submit" className="send">Send</button></div></form></div>}
+      {composeOpen && <div className="pm4-modal-backdrop" onMouseDown={() => setComposeOpen(false)}><form className="pm4-compose-modal" onSubmit={sendCompose} onMouseDown={event => event.stopPropagation()}><div className="pm4-compose-title"><strong>Compose Message</strong><button type="button" onClick={() => setComposeOpen(false)}>x</button></div><label>From<select value={compose.from_address} onChange={event => setCompose(prev => ({ ...prev, from_address: event.target.value }))}>{accounts.map(account => <option key={account.email} value={account.email}>{siteLabel(account.email)} · {account.email}{account.is_primary ? ' (Primary)' : ''}</option>)}</select></label><label>To<input required value={compose.to} onChange={event => setCompose(prev => ({ ...prev, to: event.target.value }))} /></label><label>Subject<input value={compose.subject} onChange={event => setCompose(prev => ({ ...prev, subject: event.target.value }))} /></label><textarea value={compose.text} onChange={event => setCompose(prev => ({ ...prev, text: event.target.value }))} placeholder="Write message..." /><div className="pm4-compose-footer"><button type="button" onClick={() => setComposeOpen(false)}>Cancel</button><button type="submit" className="send">Send</button></div></form></div>}
     </div>
   );
 }
