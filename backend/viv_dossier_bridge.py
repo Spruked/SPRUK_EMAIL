@@ -37,12 +37,39 @@ def _find_contact_id(email: str) -> str:
         conn.close()
 
 
+def _normalize_viv_provenance(contact_id: str) -> None:
+    """Replace legacy mail-client provenance only when it is an exact old sentinel."""
+    conn = sqlite3.connect(legacy.CONTACTS_DB_PATH)
+    try:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(contacts)").fetchall()}
+        assignments = []
+        params = []
+        if "notes" in columns:
+            assignments.append(
+                "notes = CASE WHEN notes IN ('Created from Prime Mail contacts.', 'Updated from Prime Mail contacts.') THEN ? ELSE notes END"
+            )
+            params.append("Added from VIV Communications review.")
+        if "lead_source" in columns:
+            assignments.append(
+                "lead_source = CASE WHEN lead_source = 'spruk_email' THEN ? ELSE lead_source END"
+            )
+            params.append("viv_communications")
+        if not assignments:
+            return
+        params.append(contact_id)
+        conn.execute(f"UPDATE contacts SET {', '.join(assignments)} WHERE id = ?", tuple(params))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def promote_contact_to_viv(email: str, business_scope: str = "personal") -> Dict[str, Any]:
     normalized = legacy.normalize_email(email)
     contact_id = _find_contact_id(normalized)
     if not contact_id:
         return {"status": "pending", "reason": "saved contact could not be resolved in the shared VIV substrate"}
 
+    _normalize_viv_provenance(contact_id)
     scope = _normalize_scope(business_scope)
     try:
         backfill = await legacy.external_json_request(
