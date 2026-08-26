@@ -21,6 +21,9 @@
   - current install registers **VIV Communications** rather than the old Prime Mail product identity;
   - tray process remains the persistent Windows-login supervisor;
   - backend failures now write to `%LOCALAPPDATA%\PrimeMail\backend.log` instead of failing invisibly.
+
+### Startup incident and root causes isolated
+
 - Local runtime incident discovered during post-pull validation:
   - `127.0.0.1:19000` was not listening;
   - manual launch with the repository-root `venv` failed with `ModuleNotFoundError: No module named 'fastapi'`;
@@ -30,18 +33,46 @@
   - `start_backend.bat` now prefers `backend\venv\Scripts\python.exe`;
   - fallback interpreters are accepted only if they can import `fastapi`, `uvicorn`, `httpx`, and `pydantic`;
   - when no compatible interpreter exists, startup records an explicit remediation command in `backend.log` and exits rather than silently failing.
-- Documentation refreshed:
-  - root `README.md` rewritten around VIV Communications, the shared VIV dossier model, local storage, public authenticated entrypoint, runtime topology, startup behavior, and dependency repair;
-  - `docs/SETUP.md` aligned with the V4 `app.py` entrypoint, canonical `backend\venv`, current startup flow, diagnostics, and public authenticated entrypoint.
+
+### Acceptance screenshot findings and source corrections
+
+A subsequent browser acceptance screenshot showed that the application shell could load while three independent defects were still visible:
+
+1. **Inbox displayed zero messages.**
+   - `backend/main.py` initializes SQLite during import.
+   - Without launcher-provided `EMAIL_DB_PATH`, its fallback could use `CALI_DB_PATH` as the mail database path.
+   - That allowed a manual V4 launch to open/create the wrong SQLite store and present an empty inbox even though the long-running mail authority remained on `R:\email_client\emails.db`.
+   - `backend/app.py` now establishes canonical mail, attachment, raw-custody, and VIV-dossier paths before importing `main.py`, so manual and auto-start launches resolve to the same persistent stores.
+
+2. **Unknown-source review returned HTML instead of JSON.**
+   - Browser error: `Unexpected token '<', "<!DOCTYPE ..." is not valid JSON`.
+   - Root cause: the legacy React SPA catch-all `/{full_path:path}` is registered while `main.py` imports, before V4 routers are added by `app.py`.
+   - A GET such as `/api/contact-candidates` could therefore be swallowed by the SPA fallback and receive `index.html`.
+   - `backend/app.py` now explicitly moves the SPA catch-all to the end of the FastAPI route table after V4 router composition and after route-priority adjustments.
+
+3. **Desktop shell containment defects were visible.**
+   - The top search text label overlapped the input placeholder.
+   - The Linked Dossier `Open` button was constrained to 28px and spilled against the right viewport edge.
+   - Added `frontend/src/VIVCommunicationsFixes.css`, loaded after the legacy V4 stylesheet, to correct these two presentation defects without broad layout refactoring.
+
+### Documentation refreshed
+
+- Root `README.md` documents VIV Communications, the shared VIV dossier model, local storage, public authenticated entrypoint, runtime topology, startup behavior, dependency repair, canonical persistent paths, API route-order invariant, and acceptance safeguards.
+- `docs/SETUP.md` is aligned with the V4 `app.py` entrypoint, canonical `backend\venv`, current startup flow, diagnostics, and public authenticated entrypoint.
+- Development log records the exact runtime faults and verification state rather than treating source implementation as runtime proof.
 
 ### Verification state
 
 - Source integration: **implemented**.
-- Frontend build: **passed locally** after pull.
-- VIV application: **loaded locally** during the same acceptance session.
-- VIV Communications backend after canonical-venv startup repair: **runtime re-test pending**.
-- Public `mail.spruked.com` authentication/application path: **re-test after local port 19000 is restored**.
-- Cloudflare configuration was not changed as part of this incident; local backend availability is being restored first.
+- VIV frontend build: **passed locally** during the same acceptance session.
+- VIV application: **loaded locally**.
+- VIV Communications application shell: **loaded after backend dependency repair**.
+- Canonical mail database history after pre-import path correction: **runtime re-test pending**.
+- Unknown-source review after SPA route-order correction: **runtime re-test pending**.
+- Search/dossier-header containment after CSS correction: **frontend rebuild/re-test pending**.
+- Windows tray/auto-start after canonical-venv repair: **runtime re-test pending**.
+- Public `mail.spruked.com` authentication/application path: **re-test after local port 19000 and canonical mail store are confirmed**.
+- Cloudflare configuration was not changed as part of this incident; local application composition/startup was repaired first.
 
 ---
 
