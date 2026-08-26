@@ -1,0 +1,25 @@
+/* Targeted VIV Communications shell corrections.
+   Keep these overrides after PrimeMailV4.css so legacy layout rules remain stable. */
+
+/* The old text label sat on top of the input placeholder at normal desktop zoom. */
+.pm4-search-wrap > span {
+  display: none;
+}
+
+.pm4-search-wrap input {
+  padding-left: 13px;
+}
+
+/* The dossier header button was constrained to 28px while rendering "Open",
+   which allowed the text/control to spill against the right viewport edge. */
+.pm4-dossier-head > div {
+  min-width: 0;
+}
+
+.pm4-dossier-head button {
+  width: auto;
+  min-width: 48px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}

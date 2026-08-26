@@ -2,6 +2,7 @@
   "name": "prime-mail",
   "version": "1.0.0",
   "private": true,
+  "proxy": "http://127.0.0.1:19000",
   "dependencies": {
     "dompurify": "^3.4.2",
     "react": "^18.3.1",

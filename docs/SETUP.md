@@ -1,187 +1,195 @@
-# ============================================
-# R-DRIVE EMAIL CLIENT - Setup Guide
-# Bypass Google/Microsoft - Self-Hosted Email
-# ============================================
+# VIV Communications Setup Guide
 
-## ARCHITECTURE OVERVIEW
+VIV Communications is the local-first communications surface for VIV. The local backend is the system of record for mail data, while approved people are reconciled into canonical VIV dossiers through the shared substrate.
 
-```
-SENDER
-   │
-   ▼
-Cloudflare Email Routing (catches mail for your domain)
-   │
-   ▼
-Cloudflare Worker (parses email, forwards via webhook)
-   │
-   ▼ (HTTPS webhook)
-Your Computer / R: Drive Server (FastAPI + SQLite)
-   │
-   ▼
-React Frontend (local browser UI)
-```
+## Runtime topology
 
-**What this means:**
-- ✅ NO Gmail, NO Outlook, NO Yahoo servers touch your data
-- ✅ Cloudflare only ROUTES the email bytes (doesn't store them)
-- ✅ ALL emails stored locally on YOUR R: drive
-- ✅ You own 100% of your data
-
-## PREREQUISITES
-
-1. **Domain name** (e.g., yourdomain.com) with DNS on Cloudflare
-2. **Cloudflare account** (free tier works)
-3. **Python 3.10+** installed
-4. **Node.js 18+** installed
-5. **R: drive** mapped and accessible (or change path in .env)
-
-## STEP 1: Cloudflare Inbound Setup
-
-### 1.1 Enable Email Routing
-1. Go to Cloudflare Dashboard → your domain → Email Routing
-2. Click "Onboard Domain"
-3. Add MX records automatically
-4. Wait 5-15 minutes for DNS propagation
-5. Click "Done" when Cloudflare reports that the records look good
-
-### 1.2 Create the Worker
-1. Go to Workers & Pages → Create Worker
-2. Name it `rdrive-email-receiver`
-3. Replace default code with `worker/index.js` from this project
-4. Deploy
-
-### 1.3 Set Worker Secrets
-```bash
-wrangler secret put RDRIVE_WEBHOOK_URL
-# Enter: https://your-zero-trust-hostname/api/emails/receive
-
-wrangler secret put WEBHOOK_SECRET
-# Enter: your-super-secret-key (same as backend .env)
+```text
+Internet mail
+   |
+   v
+Cloudflare Email Routing / Worker
+   |
+   v
+Cloudflare tunnel / Access
+   |
+   v
+VIV Communications
+FastAPI on 127.0.0.1:19000
+   |
+   +--> R:\email_client\emails.db
+   +--> R:\email_client\attachments
+   +--> raw-message custody vault
+   +--> shared VIV dossier substrate
 ```
 
-### 1.4 Bind Email Routing to Worker
-1. Go to Email Routing → Routing Rules
-2. Create catch-all rule: `*@yourdomain.com` → Send to Worker → `rdrive-email-receiver`
-3. Or create specific addresses: `me@yourdomain.com`, `contact@yourdomain.com`
+Expected local URL:
 
-## STEP 2: Cloudflare Outbound Setup
-
-Email Routing is inbound forwarding only. Outbound sending uses Cloudflare Email Service, which requires an account-level sender domain and send-capable API token.
-
-### 2.1 Get API Token for Sending
-1. Go to My Profile → API Tokens → Create Token
-2. Use "Custom token" with these permissions:
-   - Email Sending:Edit
-3. Copy the token for your .env file
-
-### 2.2 Get Account ID
-1. Go to any domain in Cloudflare
-2. Account ID is in the right sidebar
-3. Copy for your .env file
-
-## STEP 3: Backend Setup (R: Drive)
-
-### 2.1 Install Dependencies
-```bash
-cd backend
-pip install -r requirements.txt
+```text
+http://127.0.0.1:19000/
 ```
 
-### 2.2 Configure Environment
-```bash
-cp .env.example .env
-# Edit .env with your actual values:
-# - WEBHOOK_SECRET (same as Worker)
-# - CF_API_TOKEN (from step 2.1)
-# - CF_ACCOUNT_ID (from step 2.2, not the Zone ID)
-# - SENDER_DOMAIN (spruked.com)
+Expected public authenticated entrypoint for this installation:
+
+```text
+https://mail.spruked.com/
 ```
 
-### 2.3 Run the Server
-```bash
-python main.py
-# Server starts on http://localhost:19000
+The public hostname is expected to present its authentication layer before exposing the local application.
+
+## Prerequisites
+
+- Windows with PowerShell
+- Python 3.10+
+- Node.js 18+
+- R: drive paths used by the current installation
+- Cloudflare routing/tunnel configuration already established for the deployment
+
+## Backend environment
+
+The canonical backend Python environment is:
+
+```text
+SPRUK_EMAIL\backend\venv\
 ```
 
-**For external access** (so Cloudflare Worker can reach you):
-- Option A: Cloudflare Zero Trust tunnel to `http://localhost:19000`
-- Option B: Use ngrok: `ngrok http 19000`
-- Option C: Port forward 19000 on your router
-- Option D: Run on a VPS with public IP
+This matches `setup.bat` and is intentionally separate from any unrelated repository-root virtual environment.
 
-## STEP 4: Frontend Setup
+### Create/repair the backend environment
 
-```bash
-cd frontend
+From PowerShell:
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
+
+if (-not (Test-Path ".\venv\Scripts\python.exe")) {
+    python -m venv venv
+}
+
+& ".\venv\Scripts\python.exe" -m pip install -r requirements.txt
+```
+
+Validate the required runtime before launch:
+
+```powershell
+& ".\venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, pydantic; print('VIV Communications backend dependencies OK')"
+```
+
+## Backend entrypoint
+
+The V4 entrypoint is:
+
+```text
+backend\app.py
+```
+
+`main.py` remains the compatibility/core mail backend imported by `app.py`; do not use `main.py` as the normal V4 launcher.
+
+Direct validation:
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
+& ".\venv\Scripts\python.exe" app.py
+```
+
+Expected result: Uvicorn listens on `127.0.0.1:19000`.
+
+## Frontend setup/build
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\frontend"
 npm install
 npm run build
-# Backend serves the built UI from http://localhost:19000
 ```
 
-## STEP 5: Test Everything
+The FastAPI backend serves the production React build from port `19000`.
 
-1. Send an email to `me@yourdomain.com` from any email account
-2. Check Cloudflare Worker logs (should show "forwarded to R: drive")
-3. Check your React app - email should appear in inbox
-4. Try composing and sending from the UI
+## Normal launch and Windows autostart
 
-## SECURITY NOTES
+Use the root launcher:
 
-- **Webhook Secret**: Must match between Worker and backend. This prevents spoofing.
-- **HTTPS Only**: Never use HTTP for the webhook in production.
-- **Firewall**: Only allow Cloudflare IPs to reach your backend webhook.
-- **Backups**: Regularly backup `R:/email_client/emails.db`
-
-## TROUBLESHOOTING
-
-### Emails not arriving
-1. Check Cloudflare Email Routing analytics
-2. Check Worker logs for errors
-3. Verify webhook URL is accessible from internet
-4. Check backend console for incoming requests
-
-### Can't send emails
-1. Open `/api/config/email` and confirm outbound auth is configured
-2. Verify `CF_API_TOKEN` is valid and has Email Sending permission
-3. Verify `CF_ACCOUNT_ID` is the Account ID, not the Zone ID
-4. Verify `SENDER_DOMAIN=spruked.com`
-5. Check Cloudflare Email Service sender/domain status
-
-### Database locked
-- SQLite doesn't handle concurrent writes well
-- For heavy use, consider migrating to PostgreSQL
-
-## FILE LOCATIONS
-
-```
-R:/email_client/
-├── emails.db              # SQLite database (your emails)
-├── attachments/           # Email attachments
-└── backups/              # (create manually)
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email"
+.\start_prime_mail.bat
 ```
 
-## UPGRADING
+Despite the historical filename, this launcher now represents **VIV Communications**. It registers the current installation, creates/refreshes the VIV Communications desktop/startup entry, launches the tray supervisor, ensures the frontend build, and starts the backend.
 
-### Add PostgreSQL instead of SQLite
-Edit `main.py`:
-```python
-# Replace sqlite3 imports with asyncpg
-# Change DB_PATH to DATABASE_URL
-# Use async/await for all DB operations
+`start_backend.bat` prefers `backend\venv\Scripts\python.exe` and verifies required imports before launching. Root-level or PATH Python interpreters are only accepted when they contain the required backend modules.
+
+## Local storage
+
+Current persistent mail paths:
+
+```text
+R:\email_client\emails.db
+R:\email_client\attachments\
+R:\email_client\vault\raw_email\
 ```
 
-### Add Multiple Mailboxes
-The backend already supports multiple `to` addresses. Just add more routing rules in Cloudflare.
+Approved contacts/dossiers use the shared VIV substrate rather than a separate competing CRM/contact database.
 
-### Add Encryption
-For extra privacy, encrypt the SQLite database at rest using SQLCipher.
+## VIV dossier behavior
 
-## 2026-05-30: Major UI/UX and Integration Upgrades
+- Incoming email does not automatically create a dossier.
+- Unknown sources appear in owner review.
+- Owner-approved sources are saved/reconciled and promoted through the VIV dossier backfill path.
+- Promotion preserves business context when supplied.
+- Communications and VIV can deep-link by sender/contact/message/business context.
 
-- Added Connections/Status panel to the frontend with live status for all key integrations (Prime Mail API, CALI CRM API, Desktop ORB API, CRM DB, Email DB, Mesh/API manifest).
-- Added actions for status refresh, ORB test, and CRM sync; Ask ORB placeholder included.
-- Refactored Contacts section: sidebar now links to a full Contacts workspace/modal with list, detail/edit, add, and linked emails.
-- All UI/UX changes are fully styled and tested.
-- No changes to authority boundaries: Prime Mail = mail, CALI CRM = contacts, ORB = operator.
-- Verified: No HTTP sync, no duplicate DBs, all contact CRUD routed to shared CRM DB.
-- All changes tested and no errors found.
+## Diagnostics
+
+Check whether the local service is listening:
+
+```powershell
+Get-NetTCPConnection -LocalPort 19000 -State Listen -ErrorAction SilentlyContinue
+```
+
+Tray/startup log:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\PrimeMail\tray.log" -Tail 100
+```
+
+Backend log:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\PrimeMail\backend.log" -Tail 100
+```
+
+### `ModuleNotFoundError: No module named 'fastapi'`
+
+This is a Python-environment problem, not evidence of lost mail data or a Cloudflare failure.
+
+The backend dependency file already declares FastAPI and the rest of the required stack. Repair the canonical environment:
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
+& ".\venv\Scripts\python.exe" -m pip install -r requirements.txt
+```
+
+If `backend\venv\Scripts\python.exe` does not exist:
+
+```powershell
+python -m venv venv
+& ".\venv\Scripts\python.exe" -m pip install -r requirements.txt
+```
+
+Then launch `app.py` with that exact interpreter.
+
+### Local port works but public hostname does not
+
+Only after `127.0.0.1:19000` is confirmed healthy should the Cloudflare tunnel / Access path be investigated. Avoid changing an established Cloudflare configuration merely because the local backend failed to start.
+
+## Security notes
+
+- Keep webhook and Cloudflare credentials outside source control.
+- Treat the R: drive mail database/raw custody path as authoritative local data.
+- Public access should remain behind the established authenticated Cloudflare entrypoint.
+- Keep VIV dossier promotion human-governed for unknown senders.
+
+## Current identity
+
+Current product-facing identity: **VIV Communications**.
+
+Historical filenames such as `start_prime_mail.bat`, `prime_mail_tray.ps1`, `%LOCALAPPDATA%\PrimeMail`, and some compatibility environment keys remain to avoid breaking installed/runtime state. They should not be interpreted as the current product name.
