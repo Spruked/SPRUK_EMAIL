@@ -14,6 +14,19 @@ from viv_dossier_bridge import promote_contact_to_viv, router as viv_dossier_rou
 if not legacy.ADMIN_ACCESS_TOKEN:
     legacy.ADMIN_ACCESS_TOKEN = "viv-owner-local"
 
+# The compatibility backend still defines the original request model. Normalize
+# its externally visible sender identity here so callers that omit from_name do
+# not leak the former product name in outbound mail.
+try:
+    model_fields = getattr(legacy.SendEmailRequest, "model_fields", None)
+    if model_fields and "from_name" in model_fields:
+        model_fields["from_name"].default = "VIV Communications"
+    legacy_fields = getattr(legacy.SendEmailRequest, "__fields__", None)
+    if legacy_fields and "from_name" in legacy_fields:
+        legacy_fields["from_name"].default = "VIV Communications"
+except Exception:
+    pass
+
 app = legacy.app
 app.title = "VIV Communications"
 app.version = "4.0.0"
