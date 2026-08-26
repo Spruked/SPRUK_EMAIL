@@ -32,7 +32,7 @@
   - when no compatible interpreter exists, startup records an explicit remediation command in `backend.log` and exits rather than silently failing.
 - Documentation refreshed:
   - root `README.md` rewritten around VIV Communications, the shared VIV dossier model, local storage, public authenticated entrypoint, runtime topology, startup behavior, and dependency repair;
-  - `docs/SETUP.md` scheduled for alignment with the V4 `app.py` entrypoint and current startup flow.
+  - `docs/SETUP.md` aligned with the V4 `app.py` entrypoint, canonical `backend\venv`, current startup flow, diagnostics, and public authenticated entrypoint.
 
 ### Verification state
 
