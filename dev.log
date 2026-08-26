@@ -1,4 +1,49 @@
-# Development Log - Pro Prime Series Mail
+# Development Log - VIV Communications
+
+## 2026-08-26
+
+### VIV Communications identity, dossier integration, startup repair, and runtime verification
+
+- Continued the `prime-mail-v4` conversion from the former Prime Mail identity to **VIV Communications**.
+- Updated product-facing browser, tray, launcher, startup, and outbound sender identity to VIV Communications.
+- Preserved legacy filenames/environment keys only where compatibility still requires them.
+- Kept email semantics on **Star / Starred / Unstar**; `Mark` remains reserved for VIV subject-attention semantics.
+- Strengthened the VIV Communications <-> VIV relationship:
+  - selected senders can resolve into canonical VIV parties/dossiers;
+  - VIV dossiers can deep-link into Communications by contact/message/folder/business context;
+  - Communications can deep-link back into VIV dossier/timeline context;
+  - approved unknown sources are promoted through the canonical VIV dossier backfill path rather than creating a competing contact authority;
+  - business context is preserved during explicit owner-approved promotion;
+  - shared-substrate promotion avoids duplicate person rows.
+- Preserved the rule that receiving an email is evidence of correspondence, **not consent to automatically create a dossier**.
+- Maintained raw-message custody and sandboxed HTML rendering/containment in the V4 reader.
+- Updated Windows startup behavior:
+  - current install registers **VIV Communications** rather than the old Prime Mail product identity;
+  - tray process remains the persistent Windows-login supervisor;
+  - backend failures now write to `%LOCALAPPDATA%\PrimeMail\backend.log` instead of failing invisibly.
+- Local runtime incident discovered during post-pull validation:
+  - `127.0.0.1:19000` was not listening;
+  - manual launch with the repository-root `venv` failed with `ModuleNotFoundError: No module named 'fastapi'`;
+  - investigation confirmed `setup.bat` provisions the canonical backend environment at `backend\venv`, not the repository-root `venv`;
+  - the previous startup repair had therefore selected the wrong environment for this installation.
+- Corrective action:
+  - `start_backend.bat` now prefers `backend\venv\Scripts\python.exe`;
+  - fallback interpreters are accepted only if they can import `fastapi`, `uvicorn`, `httpx`, and `pydantic`;
+  - when no compatible interpreter exists, startup records an explicit remediation command in `backend.log` and exits rather than silently failing.
+- Documentation refreshed:
+  - root `README.md` rewritten around VIV Communications, the shared VIV dossier model, local storage, public authenticated entrypoint, runtime topology, startup behavior, and dependency repair;
+  - `docs/SETUP.md` scheduled for alignment with the V4 `app.py` entrypoint and current startup flow.
+
+### Verification state
+
+- Source integration: **implemented**.
+- Frontend build: **passed locally** after pull.
+- VIV application: **loaded locally** during the same acceptance session.
+- VIV Communications backend after canonical-venv startup repair: **runtime re-test pending**.
+- Public `mail.spruked.com` authentication/application path: **re-test after local port 19000 is restored**.
+- Cloudflare configuration was not changed as part of this incident; local backend availability is being restored first.
+
+---
 
 ## 2026-05-31
 
