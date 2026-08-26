@@ -30,7 +30,7 @@ FastAPI on 127.0.0.1:19000
       |
       +--> R:\email_client\emails.db
       +--> R:\email_client\attachments
-      +--> raw-mail custody vault
+      +--> R:\email_client\vault\raw_email
       |
       +--> VIV shared contact / dossier substrate
       |       |
@@ -72,6 +72,7 @@ SPRUK_EMAIL/
 ├── frontend/
 │   ├── src/PrimeMailV4.js        # current VIV Communications client
 │   ├── src/ContactReviewOverlay.js
+│   ├── src/VIVCommunicationsFixes.css
 │   └── package.json
 ├── scripts/
 │   ├── prime_mail_tray.ps1
@@ -120,6 +121,37 @@ if (-not (Test-Path ".\venv\Scripts\python.exe")) {
 ```
 
 `start_backend.bat` probes for a compatible interpreter and prefers `backend\venv\Scripts\python.exe`. It will not deliberately select a Python environment that cannot import the required FastAPI/Uvicorn modules.
+
+## Canonical persistent paths
+
+The V4 composition entrypoint establishes the production storage defaults **before** importing the compatibility backend. That is important because `main.py` initializes SQLite during import.
+
+```text
+Mail authority:       R:\email_client\emails.db
+Attachments:          R:\email_client\attachments\
+Raw custody:          R:\email_client\vault\raw_email\
+VIV dossier/contact:  R:\Substrate_Vault_R\vaults\r_drive_system_records\crm\memory\cali_personal.db
+```
+
+A direct `backend\app.py` launch therefore resolves to the same mail database as tray/auto-start, even when the launcher environment variables are not already present. Mail storage and VIV dossier storage must never silently collapse into the same SQLite path.
+
+## API route-order invariant
+
+`backend/main.py` contains the React SPA fallback route `/{full_path:path}`. V4 integration routers are composed later by `backend/app.py`.
+
+The SPA fallback **must remain last in the FastAPI route table**. Otherwise a concrete GET API route such as:
+
+```text
+/api/contact-candidates
+```
+
+can be intercepted by the SPA fallback and return `index.html`. In the browser that appears as:
+
+```text
+Unexpected token '<', "<!DOCTYPE ..." is not valid JSON
+```
+
+`backend/app.py` now explicitly defers the SPA catch-all behind all concrete V4 API routes.
 
 ## Build and launch
 
@@ -170,19 +202,24 @@ Get-Content "$env:LOCALAPPDATA\PrimeMail\tray.log" -Tail 100
 Get-Content "$env:LOCALAPPDATA\PrimeMail\backend.log" -Tail 100
 ```
 
-If port `19000` is not listening, diagnose the local backend before changing Cloudflare configuration.
-
-## Storage
-
-Primary persistent mail paths are local:
+Confirm the active mail store directly from the application:
 
 ```text
-R:\email_client\emails.db
-R:\email_client\attachments\
-R:\email_client\vault\raw_email\
+http://127.0.0.1:19000/api/health
 ```
 
-VIV Communications also participates in the shared VIV substrate for approved people/dossiers rather than maintaining an independent competing CRM database.
+The `storage` field should identify the canonical mail database, not the VIV dossier database.
+
+If port `19000` is not listening, diagnose the local backend before changing Cloudflare configuration.
+
+## UI containment safeguards
+
+The V4 shell includes targeted desktop containment rules for two issues observed during the August 26 acceptance pass:
+
+- the former `Search` text label could overlap the input placeholder;
+- the `Open` button in the Linked Dossier header was constrained too narrowly and could spill against the right viewport edge.
+
+`frontend/src/VIVCommunicationsFixes.css` is loaded after the existing V4 stylesheet so these corrections do not require a broad legacy-layout rewrite.
 
 ## Identity and terminology
 
@@ -201,6 +238,12 @@ Legacy `Prime Mail`, `CALI CRM`, and related names may still appear internally i
 
 The `prime-mail-v4` branch contains the VIV Communications identity conversion, VIV dossier bridge, business-context handoff, deep-link integration, HTML reader containment, human-governed unknown-source promotion, and revised Windows startup/tray registration.
 
-A runtime startup regression was identified on 2026-08-26 when a root-level virtual environment lacking FastAPI was selected during manual validation. The canonical backend environment remains `backend\venv`, matching `setup.bat`. Startup logic has been corrected to prefer and verify that backend environment before launching.
+During local acceptance on 2026-08-26, three regressions were isolated in the composition/startup layer rather than the long-running mail authority itself:
+
+1. a root-level Python environment without FastAPI was selected during manual validation;
+2. a manual V4 launch could inherit the wrong database fallback unless canonical mail/VIV paths were established before importing `main.py`;
+3. the legacy SPA catch-all could precede newly composed GET API routes and return HTML where JSON was expected.
+
+Source corrections for all three are implemented. Runtime re-verification of restored inbox history, unknown-source review, local auto-start, and the public authenticated path is still required before calling the incident fully verified.
 
 See `dev.log` for the detailed engineering history and verification state.
