@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import './PrimeMailV4.css';
 
 const API_BASE = (process.env.REACT_APP_API_BASE || '/api').replace(/\/$/, '');
-const CRM_UI = (process.env.REACT_APP_CRM_UI_URL || 'http://127.0.0.1:21010').replace(/\/$/, '');
+const VIV_UI = (process.env.REACT_APP_VIV_UI_URL || process.env.REACT_APP_CRM_UI_URL || 'http://127.0.0.1:21010').replace(/\/$/, '');
 
 const BUSINESS_OPTIONS = [
   ['all', 'All'],
@@ -129,12 +129,18 @@ function firstHttpLink(html = '') {
   }
 }
 
+function initialParams() {
+  if (typeof window === 'undefined') return new URLSearchParams();
+  return new URLSearchParams(window.location.search);
+}
+
 function ReaderFrame({ html }) {
   const srcDoc = useMemo(() => safeHtmlDocument(html), [html]);
   return <iframe className="pm4-html-frame" title="Rendered email" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={srcDoc} />;
 }
 
 export default function PrimeMailV4() {
+  const startupParams = useMemo(() => initialParams(), []);
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -142,9 +148,9 @@ export default function PrimeMailV4() {
   const [stats, setStats] = useState({});
   const [integrations, setIntegrations] = useState({});
   const [currentAccount, setCurrentAccount] = useState('all');
-  const [currentFolder, setCurrentFolder] = useState('inbox');
-  const [businessScope, setBusinessScope] = useState(() => localStorage.getItem('prime_mail_business_scope') || 'spruked');
-  const [search, setSearch] = useState('');
+  const [currentFolder, setCurrentFolder] = useState(() => startupParams.get('folder') || 'inbox');
+  const [businessScope, setBusinessScope] = useState(() => startupParams.get('business_scope') || localStorage.getItem('viv_communications_business_scope') || localStorage.getItem('prime_mail_business_scope') || 'spruked');
+  const [search, setSearch] = useState(() => startupParams.get('contact') || '');
   const [sortOrder, setSortOrder] = useState('desc');
   const [composeOpen, setComposeOpen] = useState(false);
   const [compose, setCompose] = useState({ from_address: '', to: '', subject: '', text: '' });
@@ -154,10 +160,11 @@ export default function PrimeMailV4() {
   const [caliDossier, setCaliDossier] = useState(null);
   const [caliTimeline, setCaliTimeline] = useState([]);
   const [dossierLoading, setDossierLoading] = useState(false);
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
 
   const selectedAccount = currentAccount === 'all' ? (accounts[0]?.email || '') : currentAccount;
-  const crmOnline = Boolean(integrations?.crm?.online || integrations?.crm_api?.status === 'ok' || integrations?.crm_db?.status === 'ok');
-  const calendarOnline = integrations?.calendar?.online ?? crmOnline;
+  const vivOnline = Boolean(integrations?.crm?.online || integrations?.crm_api?.status === 'ok' || integrations?.crm_db?.status === 'ok');
+  const calendarOnline = integrations?.calendar?.online ?? vivOnline;
   const selectedSenderEmail = extractEmail(selectedEmail?.sender || '');
   const senderName = caliDossier?.party?.display_name || caliParty?.display_name || displayName(selectedEmail?.sender || '');
   const legacyContact = caliDossier?.legacy_contact || {};
@@ -222,7 +229,7 @@ export default function PrimeMailV4() {
     });
   }, [emails, sortOrder]);
 
-  const loadCaliDossier = useCallback(async (email) => {
+  const loadVIVDossier = useCallback(async (email) => {
     const normalized = extractEmail(email);
     setCaliParty(null);
     setCaliDossier(null);
@@ -250,8 +257,8 @@ export default function PrimeMailV4() {
   }, [businessScope, requestJson]);
 
   useEffect(() => {
-    if (selectedSenderEmail) loadCaliDossier(selectedSenderEmail);
-  }, [loadCaliDossier, selectedSenderEmail]);
+    if (selectedSenderEmail) loadVIVDossier(selectedSenderEmail);
+  }, [loadVIVDossier, selectedSenderEmail]);
 
   async function openEmail(email) {
     try {
@@ -261,6 +268,21 @@ export default function PrimeMailV4() {
       setNotice(`Could not open message: ${error.message}`);
     }
   }
+
+  useEffect(() => {
+    if (deepLinkHandled) return;
+    const requestedMessage = startupParams.get('message');
+    if (requestedMessage) {
+      setDeepLinkHandled(true);
+      void openEmail({ id: requestedMessage });
+      return;
+    }
+    const requestedContact = extractEmail(startupParams.get('contact') || '');
+    if (!requestedContact || !emails.length) return;
+    const match = emails.find(email => extractEmail(email.sender || '') === requestedContact || extractEmail(email.recipient || '') === requestedContact);
+    setDeepLinkHandled(true);
+    if (match) void openEmail(match);
+  }, [deepLinkHandled, emails, startupParams]);
 
   async function patchEmail(id, payload) {
     await requestJson(`${API_BASE}/emails/${id}`, {
@@ -350,16 +372,17 @@ export default function PrimeMailV4() {
       const result = await requestJson(`${API_BASE}/integrations/cali/retry-pending?limit=100`, { method: 'POST' });
       setNotice(result.attempted ? `VIV sync: ${result.delivered}/${result.attempted} messages correlated.` : 'VIV is already synchronized.');
       await refreshChrome();
-      if (selectedSenderEmail) await loadCaliDossier(selectedSenderEmail);
+      if (selectedSenderEmail) await loadVIVDossier(selectedSenderEmail);
     } catch (error) { setNotice(`VIV sync failed: ${error.message}`); }
     finally { setSyncing(false); }
   }
 
-  function openCrm(path = '/contacts') {
+  function openVIV(path = '/contacts') {
     const params = new URLSearchParams();
     if (caliParty?.party_id) params.set('party_id', caliParty.party_id);
+    if (selectedSenderEmail) params.set('email', selectedSenderEmail);
     if (businessScope && businessScope !== 'all') params.set('business_scope', businessScope);
-    window.open(`${CRM_UI}${path}${params.toString() ? `?${params}` : ''}`, '_blank', 'noopener,noreferrer');
+    window.open(`${VIV_UI}${path}${params.toString() ? `?${params}` : ''}`, '_blank', 'noopener,noreferrer');
   }
 
   function createEvent() {
@@ -368,14 +391,14 @@ export default function PrimeMailV4() {
     if (senderName) params.set('contact', senderName);
     if (selectedEmail?.subject) params.set('subject', selectedEmail.subject);
     if (businessScope && businessScope !== 'all') params.set('business_scope', businessScope);
-    window.open(`${CRM_UI}/calendar?${params}`, '_blank', 'noopener,noreferrer');
+    window.open(`${VIV_UI}/calendar?${params}`, '_blank', 'noopener,noreferrer');
   }
 
   async function callOrb() {
     try {
       const data = await requestJson(`${API_BASE}/integrations/orb/query`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: 'status', context: { source: 'prime_mail', selected_email_id: selectedEmail?.id || null, party_id: caliParty?.party_id || null, business_scope: businessScope } })
+        body: JSON.stringify({ prompt: 'status', context: { source: 'viv_communications', selected_email_id: selectedEmail?.id || null, party_id: caliParty?.party_id || null, business_scope: businessScope } })
       });
       setNotice(data.response || 'ORB connected.');
     } catch (error) { setNotice(`ORB unavailable: ${error.message}`); }
@@ -383,6 +406,7 @@ export default function PrimeMailV4() {
 
   function changeBusiness(value) {
     setBusinessScope(value);
+    localStorage.setItem('viv_communications_business_scope', value);
     localStorage.setItem('prime_mail_business_scope', value);
   }
 
@@ -415,8 +439,8 @@ export default function PrimeMailV4() {
         </select>
         <button className="pm4-btn pm4-green" onClick={() => openCompose()}>Compose</button>
         <button className="pm4-btn pm4-blue" onClick={callOrb}>ORB</button>
-        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/contacts')}>Dossiers</button>
-        <button className="pm4-btn pm4-dark" onClick={() => openCrm('/calendar')}>Timeline</button>
+        <button className="pm4-btn pm4-dark" onClick={() => openVIV('/contacts')}>Dossiers</button>
+        <button className="pm4-btn pm4-dark" onClick={() => openVIV('/activities')}>Timeline</button>
         <button className={`pm4-sync ${syncing ? 'busy' : ''}`} onClick={syncNow}><span />{syncing ? 'SYNCING' : 'SYNC VIV'}</button>
       </header>
 
@@ -424,7 +448,7 @@ export default function PrimeMailV4() {
         <aside className="pm4-sidebar">
           <button className="pm4-compose-wide" onClick={() => openCompose()}>+ Compose</button>
           <div className="pm4-label">VIV COMMUNICATIONS</div>
-          <div className="pm4-workspace"><button className="active">Mail</button><button onClick={() => openCrm('/contacts')}>Dossiers</button><button onClick={() => openCrm('/calendar')}>Timeline</button></div>
+          <div className="pm4-workspace"><button className="active">Mail</button><button onClick={() => openVIV('/contacts')}>Dossiers</button><button onClick={() => openVIV('/activities')}>Timeline</button></div>
 
           <div className="pm4-label">MAILBOXES</div>
           <div className="pm4-mailbox-card"><span className="pm4-dot blue" /><div><strong>{selectedAccount || 'All Accounts'}</strong><small>{stats.unread_emails ?? emails.filter(item => !item.read).length} unread messages · {currentAccount === 'all' ? 'All accounts' : 'Active account'}</small></div></div>
@@ -438,8 +462,8 @@ export default function PrimeMailV4() {
           <div className="pm4-business-card"><strong>{activeBusinessLabel}</strong><small>{businessScope === 'all' ? 'All contexts' : businessScope.replaceAll('_', ' ')}</small><select value={businessScope} onChange={event => changeBusiness(event.target.value)}>{BUSINESS_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
 
           <div className="pm4-label">LINKS</div>
-          <div className="pm4-connected"><div><span className={`pm4-dot ${crmOnline ? 'green' : 'amber'}`} />VIV<small>{crmOnline ? 'Linked' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Timeline<small>{calendarOnline ? 'Linked' : 'Check'}</small></div><div><span className="pm4-dot green" />Correlation<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
-          <div className="pm4-sidebar-footer"><button onClick={() => openCrm('/settings')}>Settings</button><button onClick={() => setNotice('Manage mail accounts from VIV settings.')}>Accounts</button></div>
+          <div className="pm4-connected"><div><span className={`pm4-dot ${vivOnline ? 'green' : 'amber'}`} />VIV<small>{vivOnline ? 'Linked' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Timeline<small>{calendarOnline ? 'Linked' : 'Check'}</small></div><div><span className="pm4-dot green" />Correlation<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
+          <div className="pm4-sidebar-footer"><button onClick={() => openVIV('/')}>VIV Home</button><button onClick={() => setNotice('Manage mail accounts from VIV Communications configuration.')}>Accounts</button></div>
         </aside>
 
         <section className="pm4-list-panel">
@@ -460,7 +484,7 @@ export default function PrimeMailV4() {
         </section>
 
         <aside className="pm4-dossier">
-          <div className="pm4-dossier-head"><div><strong>LINKED DOSSIER</strong><span>{dossierLoading ? 'RESOLVING' : 'READY'}</span></div><button onClick={() => openCrm('/contacts')}>Open</button></div>
+          <div className="pm4-dossier-head"><div><strong>LINKED DOSSIER</strong><span>{dossierLoading ? 'RESOLVING' : 'READY'}</span></div><button onClick={() => openVIV('/contacts')}>Open</button></div>
           {selectedEmail ? <div className="pm4-dossier-scroll">
             <div className="pm4-person-card"><div className="pm4-avatar">{initials(senderName)}</div><div><h2>{senderName}</h2><p>{legacyContact.company_role || primaryRole?.role || (caliParty ? 'Known subject' : 'Unknown sender')}</p><span className={caliParty ? 'linked' : 'unlinked'}>{caliParty ? 'IDENTITY LINKED' : 'UNRESOLVED'}</span></div></div>
 
@@ -474,8 +498,8 @@ export default function PrimeMailV4() {
             <div className="pm4-activity-card">{recentTimeline.length ? recentTimeline.map((event, index) => <div key={event.message_id || index}><span className={`pm4-dot ${index === 0 ? 'green' : index === 1 ? 'blue' : 'purple'}`} /><div><strong>{event.title || `${event.direction || 'Message'} event`}</strong><small>{formatDate(event.occurred_at)} · {event.direction || 'message'}</small></div></div>) : <div><span className="pm4-dot blue" /><div><strong>{caliParty ? 'Identity linked to VIV' : 'No timeline yet'}</strong><small>{caliParty ? 'This sender is connected to a VIV dossier' : 'The sender can be linked when you choose to add them'}</small></div></div>}</div>
 
             <div className="pm4-dossier-label">ACTIONS</div>
-            <div className="pm4-quick-actions"><button className="primary" onClick={() => openCrm('/contacts')}>Open Dossier</button><button onClick={() => openCrm('/contacts')}>Add Note</button><button onClick={createEvent}>Add Event</button></div>
-            <div className="pm4-linked-banner">Communications + Dossiers + Timeline linked <span>{crmOnline ? 'LINKED' : 'CHECK LINK'}</span></div>
+            <div className="pm4-quick-actions"><button className="primary" onClick={() => openVIV('/contacts')}>Open Dossier</button><button onClick={() => openVIV('/contacts')}>Add Note</button><button onClick={createEvent}>Add Event</button></div>
+            <div className="pm4-linked-banner">Communications + Dossiers + Timeline linked <span>{vivOnline ? 'LINKED' : 'CHECK LINK'}</span></div>
           </div> : <div className="pm4-dossier-empty">Select a message to load its VIV dossier context.</div>}
         </aside>
       </main>
