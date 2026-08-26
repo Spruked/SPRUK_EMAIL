@@ -34,6 +34,15 @@
   - fallback interpreters are accepted only if they can import `fastapi`, `uvicorn`, `httpx`, and `pydantic`;
   - when no compatible interpreter exists, startup records an explicit remediation command in `backend.log` and exits rather than silently failing.
 
+### Port 3000 development frontend clarified
+
+- The user's active React development client runs on port `3000` via Create React App (`npm start`).
+- The FastAPI backend/API remains on port `19000`.
+- `frontend/package.json` previously had no CRA proxy while the frontend code used relative `/api` URLs.
+- On port `3000`, that combination can cause `/api/...` requests to be handled by the React development server and return `index.html`, producing errors such as `Unexpected token '<'` and an apparently empty inbox even when the backend/mail database is healthy.
+- Added `"proxy": "http://127.0.0.1:19000"` to `frontend/package.json` so development `/api` requests on port `3000` are forwarded to the actual mail backend.
+- `npm` `ENOENT` / missing `package.json` was also observed when a frontend command was run from `backend\`; frontend npm commands must be run from `SPRUK_EMAIL\frontend`.
+
 ### Acceptance screenshot findings and source corrections
 
 A subsequent browser acceptance screenshot showed that the application shell could load while three independent defects were still visible:
@@ -57,7 +66,7 @@ A subsequent browser acceptance screenshot showed that the application shell cou
 
 ### Documentation refreshed
 
-- Root `README.md` documents VIV Communications, the shared VIV dossier model, local storage, public authenticated entrypoint, runtime topology, startup behavior, dependency repair, canonical persistent paths, API route-order invariant, and acceptance safeguards.
+- Root `README.md` documents VIV Communications, the shared VIV dossier model, local storage, public authenticated entrypoint, runtime topology, startup behavior, dependency repair, canonical persistent paths, API route-order invariant, port `3000` development behavior, and acceptance safeguards.
 - `docs/SETUP.md` is aligned with the V4 `app.py` entrypoint, canonical `backend\venv`, current startup flow, diagnostics, and public authenticated entrypoint.
 - Development log records the exact runtime faults and verification state rather than treating source implementation as runtime proof.
 
@@ -69,6 +78,7 @@ A subsequent browser acceptance screenshot showed that the application shell cou
 - VIV Communications application shell: **loaded after backend dependency repair**.
 - Canonical mail database history after pre-import path correction: **runtime re-test pending**.
 - Unknown-source review after SPA route-order correction: **runtime re-test pending**.
+- Port `3000` React development frontend after CRA proxy restoration: **runtime re-test pending**.
 - Search/dossier-header containment after CSS correction: **frontend rebuild/re-test pending**.
 - Windows tray/auto-start after canonical-venv repair: **runtime re-test pending**.
 - Public `mail.spruked.com` authentication/application path: **re-test after local port 19000 and canonical mail store are confirmed**.
@@ -117,5 +127,3 @@ A subsequent browser acceptance screenshot showed that the application shell cou
 - No changes to contact or email authority: Prime Mail remains mail authority, CALI CRM is contact authority, ORB is operator/assistant layer.
 - Verified: No HTTP sync, no duplicate DBs, all contact CRUD routed to shared CRM DB.
 - All changes tested and no errors found.
-
----
