@@ -40,6 +40,49 @@ def _do_not_autocreate_contact(_cursor, _email, _name, _timestamp):
 
 legacy.upsert_contact = _do_not_autocreate_contact
 
+
+async def _sync_contact_to_viv(email, name, contact_type="contact", crm_stage=None):
+    """Promote an explicitly approved communication source into canonical VIV state.
+
+    The mail client and VIV share the substrate database, so the legacy contact row
+    may already exist by the time this runs. The VIV endpoint reconciles that row
+    into its canonical identity/dossier view and then ensures the dossier package.
+    """
+    normalized = legacy.normalize_email(email)
+    if not normalized:
+        return {"status": "skipped", "reason": "email_required"}
+    try:
+        contact = await legacy.external_json_request(
+            "POST",
+            f"{legacy.CRM_API_URL}/cali/contacts",
+            headers=legacy.crm_headers(),
+            json_body={
+                "name": name or normalized.split("@", 1)[0],
+                "email": normalized,
+                "contact_type": contact_type or "contact",
+                "crm_stage": crm_stage,
+                "priority": 1,
+                "owner": legacy.default_account_address(),
+            },
+        )
+        contact_id = str(contact.get("id") or contact.get("contact_id") or "").strip() if isinstance(contact, dict) else ""
+        package = None
+        if contact_id:
+            package = await legacy.external_json_request(
+                "POST",
+                f"{legacy.CRM_API_URL}/cali/intelligence/dossiers/packages/ensure",
+                headers=legacy.crm_headers(),
+                json_body={"contact_ids": [contact_id]},
+            )
+        return {"status": "linked", "contact": contact, "package": package}
+    except Exception as exc:
+        # The local explicit-save record remains durable. Report a degraded bridge
+        # rather than pretending the canonical VIV promotion succeeded.
+        return {"status": "pending", "reason": str(exc)}
+
+
+legacy.sync_contact_to_crm = _sync_contact_to_viv
+
 # main.py already owns the legacy /api/emails/receive route. Put the custody-aware
 # route ahead of it without rewriting the large compatibility backend. The custody
 # route stores immutable raw bytes, then delegates parsed-message insertion.
