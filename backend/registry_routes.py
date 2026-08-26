@@ -136,11 +136,16 @@ def _seed_account(conn: sqlite3.Connection, email: str, display_name: Optional[s
 
 
 def _apply_primary_account_policy(conn: sqlite3.Connection) -> None:
-    """Keep the real Spruked mailbox primary while leaving future sites opt-in.
+    """Separate primary-user identity from active inbound site mailboxes.
 
-    Earlier builds seeded several planned addresses as if they were active mailboxes.
-    Only legacy-scaffold rows are demoted here. An account explicitly added later via
-    the registry receives a different config_ref and remains active.
+    The site addresses are valid receiving identities for contact forms, investor
+    inquiries, beta-tester communications, and other site-specific intake. Being
+    non-primary must never hide or deactivate those inboxes. The primary flag only
+    determines the default user-facing mailbox/sender preference.
+
+    A prior development pass incorrectly marked legacy non-primary site accounts as
+    pending. Reactivate only those legacy-scaffold rows here so existing inbound
+    routing remains visible without deleting or rewriting historical mail.
     """
 
     primary = _primary_account()
@@ -148,11 +153,10 @@ def _apply_primary_account_policy(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         UPDATE mail_account
-        SET status='pending'
+        SET status='active'
         WHERE config_ref='legacy-or-cloudflare-config'
-          AND lower(local_part || '@' || domain_id) <> ?
-        """,
-        (primary,),
+          AND status='pending'
+        """
     )
     conn.execute(
         """
@@ -168,7 +172,7 @@ def seed_registry_from_legacy_accounts() -> None:
     ensure_registry_schema()
     legacy_accounts = list(legacy.ACCOUNTS)
     with _connect() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM mail_account WHERE status='active'").fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM mail_account").fetchone()[0]
         if count == 0:
             for account in legacy_accounts:
                 _seed_account(conn, str(account.get("email") or ""), str(account.get("label") or "") or None)
@@ -177,12 +181,12 @@ def seed_registry_from_legacy_accounts() -> None:
 
 
 def sync_legacy_account_globals() -> None:
-    """Make the existing backend endpoints honor the dynamic registry.
+    """Make existing backend endpoints honor the persistent site/account registry.
 
-    main.py still owns message retrieval/sending. Its account validation reads the
-    ACCOUNTS/ACCOUNT_EMAILS globals at request time, so mutating those globals is
-    enough to keep the existing send/draft/folder code working while the registry
-    becomes persistent and user-editable.
+    All active receiving addresses remain available for inbox filtering and
+    site-specific sorting. `is_primary` is separate metadata and identifies the
+    user's preferred/default account; it does not imply that other addresses are
+    disabled or unused for inbound site communications.
     """
 
     seed_registry_from_legacy_accounts()
