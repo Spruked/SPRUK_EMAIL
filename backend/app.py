@@ -6,6 +6,7 @@ from contact_candidate_routes import router as contact_candidate_router
 from custody_routes import receive_email_with_custody, router as custody_router
 from mail_repair import repair_suspicious_messages
 from registry_routes import router as registry_router, sync_legacy_account_globals
+from viv_dossier_bridge import promote_contact_to_viv, router as viv_dossier_router
 
 # VIV Communications and VIV Core are components of the same single-owner system.
 # Keep legacy token-aware code paths intact for compatibility, but ensure the
@@ -20,6 +21,7 @@ app.include_router(registry_router)
 app.include_router(cali_bridge_router)
 app.include_router(contact_candidate_router)
 app.include_router(custody_router)
+app.include_router(viv_dossier_router)
 
 # The V4 reader isolates decoded message HTML in a sandboxed iframe. Preserve the
 # decoded HTML at ingestion instead of destructively stripping tables/styles so
@@ -42,43 +44,16 @@ legacy.upsert_contact = _do_not_autocreate_contact
 
 
 async def _sync_contact_to_viv(email, name, contact_type="contact", crm_stage=None):
-    """Promote an explicitly approved communication source into canonical VIV state.
+    """Compatibility hook for callers that explicitly request a VIV sync.
 
-    The mail client and VIV share the substrate database, so the legacy contact row
-    may already exist by the time this runs. The VIV endpoint reconciles that row
-    into its canonical identity/dossier view and then ensures the dossier package.
+    Mail and VIV share the contact substrate. Never create a second contact row.
+    Reconcile the already-saved row through the canonical dossier backfill path.
+    Callers that know the active business context should use /api/integrations/viv/
+    promote-contact so that context is preserved; this fallback uses personal.
     """
-    normalized = legacy.normalize_email(email)
-    if not normalized:
+    if not email:
         return {"status": "skipped", "reason": "email_required"}
-    try:
-        contact = await legacy.external_json_request(
-            "POST",
-            f"{legacy.CRM_API_URL}/cali/contacts",
-            headers=legacy.crm_headers(),
-            json_body={
-                "name": name or normalized.split("@", 1)[0],
-                "email": normalized,
-                "contact_type": contact_type or "contact",
-                "crm_stage": crm_stage,
-                "priority": 1,
-                "owner": legacy.default_account_address(),
-            },
-        )
-        contact_id = str(contact.get("id") or contact.get("contact_id") or "").strip() if isinstance(contact, dict) else ""
-        package = None
-        if contact_id:
-            package = await legacy.external_json_request(
-                "POST",
-                f"{legacy.CRM_API_URL}/cali/intelligence/dossiers/packages/ensure",
-                headers=legacy.crm_headers(),
-                json_body={"contact_ids": [contact_id]},
-            )
-        return {"status": "linked", "contact": contact, "package": package}
-    except Exception as exc:
-        # The local explicit-save record remains durable. Report a degraded bridge
-        # rather than pretending the canonical VIV promotion succeeded.
-        return {"status": "pending", "reason": str(exc)}
+    return await promote_contact_to_viv(email, "personal")
 
 
 legacy.sync_contact_to_crm = _sync_contact_to_viv
