@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 const API_BASE = (process.env.REACT_APP_API_BASE || '/api').replace(/\/$/, '');
+const REVIEW_SEEN_KEY = 'viv_communications_contact_review_seen';
+const LEGACY_REVIEW_SEEN_KEY = 'prime_mail_contact_review_seen';
 
 export default function ContactReviewOverlay() {
   const [candidates, setCandidates] = useState([]);
@@ -30,10 +32,11 @@ export default function ContactReviewOverlay() {
 
   useEffect(() => {
     if (!candidates.length) return;
-    if (sessionStorage.getItem('prime_mail_contact_review_seen') === '1') return;
+    if (sessionStorage.getItem(REVIEW_SEEN_KEY) === '1' || sessionStorage.getItem(LEGACY_REVIEW_SEEN_KEY) === '1') return;
     const timer = setTimeout(() => {
       setOpen(true);
-      sessionStorage.setItem('prime_mail_contact_review_seen', '1');
+      sessionStorage.setItem(REVIEW_SEEN_KEY, '1');
+      sessionStorage.setItem(LEGACY_REVIEW_SEEN_KEY, '1');
     }, 1200);
     return () => clearTimeout(timer);
   }, [candidates]);
@@ -54,6 +57,8 @@ export default function ContactReviewOverlay() {
     }
     setBusy(true);
     try {
+      let linked = 0;
+      let pending = 0;
       for (const candidate of selectedCandidates) {
         const response = await fetch(`${API_BASE}/contacts`, {
           method: 'POST',
@@ -63,14 +68,20 @@ export default function ContactReviewOverlay() {
             email: candidate.email,
             contact_type: 'contact',
             crm_stage: null,
-            sync_crm: false
+            sync_crm: true
           })
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || `Could not save ${candidate.email}`);
+        if (data?.crm_sync?.status === 'linked') linked += 1;
+        else pending += 1;
       }
       setSelected({});
-      setNotice(`${selectedCandidates.length} source${selectedCandidates.length === 1 ? '' : 's'} added to VIV.`);
+      setNotice(
+        pending
+          ? `${selectedCandidates.length} source${selectedCandidates.length === 1 ? '' : 's'} saved; ${linked} linked to canonical VIV dossiers and ${pending} awaiting bridge reconciliation.`
+          : `${selectedCandidates.length} source${selectedCandidates.length === 1 ? '' : 's'} added to canonical VIV dossiers.`
+      );
       await load();
     } catch (error) {
       setNotice(error.message);
@@ -114,7 +125,7 @@ export default function ContactReviewOverlay() {
               <div>
                 <h2>Review unknown sources</h2>
                 <p>
-                  VIV does not create dossiers automatically. Choose the people you want to remember and link to future communications.
+                  VIV does not create dossiers automatically. Choose the people you want to remember; approved sources are reconciled into canonical VIV dossiers and linked to future communications.
                   {filtered > 0 ? ` ${filtered} obvious automated/bulk sender${filtered === 1 ? '' : 's'} filtered as noise.` : ''}
                 </p>
               </div>
