@@ -14,11 +14,20 @@ set "BACKEND_LOG=%LOG_DIR%\backend.log"
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
-rem The repository venv is at the project root, not backend\venv. Use that exact
-rem interpreter so hidden tray/autostart launches get the same dependencies as a
-rem manually activated shell. Fall back to PATH only if the repo venv is absent.
-set "PYTHON_EXE=%ROOT%\venv\Scripts\python.exe"
-if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
+rem setup.bat provisions backend\venv, which is the canonical backend runtime.
+rem Prefer it first. Root-level venv and PATH Python are compatibility fallbacks,
+rem but only if they can import the required backend modules.
+set "PYTHON_EXE="
+call :probe_python "%ROOT%\backend\venv\Scripts\python.exe"
+if not defined PYTHON_EXE call :probe_python "%ROOT%\venv\Scripts\python.exe"
+if not defined PYTHON_EXE call :probe_python "python"
+
+if not defined PYTHON_EXE (
+  echo [%date% %time%] ERROR: No Python runtime with FastAPI/Uvicorn dependencies was found.>>"%BACKEND_LOG%"
+  echo [%date% %time%] Expected canonical runtime: %ROOT%\backend\venv\Scripts\python.exe>>"%BACKEND_LOG%"
+  echo [%date% %time%] Repair: cd /d "%ROOT%\backend" ^&^& python -m venv venv ^&^& venv\Scripts\python.exe -m pip install -r requirements.txt>>"%BACKEND_LOG%"
+  exit /b 9009
+)
 
 echo [%date% %time%] Starting VIV Communications backend with %PYTHON_EXE%>>"%BACKEND_LOG%"
 cd /d "%ROOT%\backend"
@@ -26,3 +35,11 @@ cd /d "%ROOT%\backend"
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" echo [%date% %time%] VIV Communications backend exited with code %EXIT_CODE%>>"%BACKEND_LOG%"
 exit /b %EXIT_CODE%
+
+:probe_python
+set "CANDIDATE=%~1"
+if "%CANDIDATE%"=="" exit /b 0
+if /i not "%CANDIDATE%"=="python" if not exist "%CANDIDATE%" exit /b 0
+"%CANDIDATE%" -c "import fastapi, uvicorn, httpx, pydantic" >nul 2>&1
+if not errorlevel 1 set "PYTHON_EXE=%CANDIDATE%"
+exit /b 0
