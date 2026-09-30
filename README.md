@@ -1,99 +1,302 @@
-# 📧 Pro Prime Series Mail
+# VIV Communications
 
-**A self-hosted email client that bypasses Google, Microsoft, and Yahoo entirely.**
+**VIV Communications is the local-first email and communications surface for VIV — Vector Intelligence Vault.**
 
-Your emails go directly from Cloudflare's routing network to your local R: drive. No big tech servers ever touch your data.
+It stores the authoritative mail record locally on the R: drive, serves the backend/API from FastAPI on port `19000`, and integrates approved people and correspondence with canonical VIV dossiers. During development, the React client may run separately on port `3000`.
 
-## 🚀 Quick Start
+Public access is intended through the configured Cloudflare tunnel / Access layer at `https://mail.spruked.com/`, where the authentication screen appears before the local VIV Communications application is exposed.
 
-1. **Double-click** `setup.bat`
-2. **Edit** `backend/.env` with your Cloudflare credentials
-3. **Deploy** the Cloudflare Worker (see `docs/SETUP.md`)
-4. **Run** `start_backend.bat` then `start_frontend.bat`
+## Current product boundary
 
-## 🏗️ Architecture
+- **VIV Communications** owns email presentation, mail actions, message custody, local mail storage, account/folder state, drafts, search, and communications UX.
+- **VIV** owns canonical subjects/dossiers, business context, relationships, lifecycle state, and durable intelligence about people.
+- Incoming email is evidence of correspondence. It does **not** automatically create a VIV dossier.
+- Unknown senders are reviewed by the owner. Approved people are reconciled into the shared VIV substrate and promoted into canonical dossiers without creating a competing contact authority.
 
+## Runtime architecture
+
+```text
+Internet sender
+      |
+      v
+Cloudflare Email Routing / Worker
+      |
+      v
+Authenticated tunnel / webhook path
+      |
+      v
+VIV Communications backend / API
+FastAPI on 127.0.0.1:19000
+      |
+      +--> R:\email_client\emails.db
+      +--> R:\email_client\attachments
+      +--> R:\email_client\vault\raw_email
+      |
+      +--> VIV shared contact / dossier substrate
+      |       |
+      |       +--> canonical Party / dossier
+      |       +--> business context
+      |       +--> relationship intelligence
+      |
+      +--> production built React UI may be served by FastAPI
+      |
+      +--> development React UI may run on 127.0.0.1:3000
+             and proxy /api to 127.0.0.1:19000
 ```
-Internet Sender
-      │
-      ▼
-Cloudflare Email Routing (just routes, doesn't store)
-      │
-      ▼
-Cloudflare Worker (parses, forwards via webhook)
-      │
-      ▼ (HTTPS)
-Your Computer → R: Drive (SQLite + FastAPI)
-      │
-      ▼
-React UI (served by FastAPI on port 19000)
+
+## Primary capabilities
+
+- Site-aware inbox and sent-mail views
+- Read, compose, reply, forward, star, archive, trash, drafts, and search
+- Sandboxed/contained HTML email reader
+- Local message custody and raw-message preservation
+- Unknown-source review before dossier promotion
+- VIV dossier lookup from a selected sender
+- Communications-to-dossier and dossier-to-communications deep links
+- Business-context-aware VIV handoff
+- Shared canonical contact substrate rather than duplicate CRM/contact databases
+- Startup tray supervisor and Windows login autostart
+- Public Cloudflare Access entrypoint at `mail.spruked.com`
+
+## Mailbox authority and site sorting
+
+The primary personal/default sender is:
+
+```text
+bryan@spruked.com
 ```
 
-## ✨ Features
+That address is the default **primary sender** unless `PRIMARY_EMAIL_ACCOUNT` is explicitly changed.
 
-- ✅ **Zero Big Tech** - No Gmail, Outlook, Yahoo servers
-- ✅ **Local Storage** - All emails on YOUR R: drive
-- ✅ **Full Inbox** - Read, compose, reply, star, archive
-- ✅ **Search** - Full-text search across all emails
-- ✅ **Contacts** - Auto-built from incoming emails
-- ✅ **Threading** - Conversation grouping
-- ✅ **Receive via Email Routing** - Inbound mail routes to the local webhook
-- ✅ **Send via Email Service** - Outbound uses Cloudflare Email Service API
+The other site addresses are **not personal-primary mailboxes**, but they are valid receiving identities for site contact forms, investor inquiries, beta-tester communications, and other site-specific intake. Being non-primary must not hide, disable, or remove those inboxes. A prior development pass incorrectly moved legacy non-primary site mailboxes to `pending`; the registry now reactivates those legacy receiving identities while keeping `bryan@spruked.com` primary.
 
-## 📁 Project Structure
+Additional site addresses that have not yet been configured can be added later through the registry. Their setup state is separate from whether existing site mailboxes remain visible for inbound mail.
 
+The mailbox/site presentation order is:
+
+```text
+1. Spruked
+2. TrueMark Mint
+3. CertSig
+4. Alpha CertSig
+5. Other sites
 ```
-pro-prime-series-mail/
-├── backend/          # FastAPI server (stores emails locally)
-│   ├── main.py
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/         # React email client UI
-│   ├── src/
-│   │   ├── App.js
-│   │   ├── App.css
-│   │   └── index.js
+
+The V4 message list defaults to **By Site**, with newest mail first inside each site. Historical mail is never deleted or rewritten merely because an address is primary, non-primary, or awaiting additional setup.
+
+When **All Sites** is selected, composing still uses the backend-declared primary sender rather than whichever domain happens to sort first alphabetically.
+
+## Repository layout
+
+```text
+SPRUK_EMAIL/
+├── backend/
+│   ├── app.py                    # VIV Communications V4 entrypoint
+│   ├── main.py                   # compatibility backend and core mail API
+│   ├── viv_dossier_bridge.py     # Communications -> canonical VIV dossier bridge
+│   ├── cali_bridge_routes.py     # VIV/CALI compatibility integration routes
+│   ├── custody_routes.py         # raw-message custody path
+│   ├── contact_candidate_routes.py
+│   ├── registry_routes.py        # site/account registry and primary-account policy
+│   └── requirements.txt
+├── frontend/
+│   ├── src/PrimeMailV4.js        # current VIV Communications client
+│   ├── src/ContactReviewOverlay.js
+│   ├── src/VIVCommunicationsFixes.css
 │   └── package.json
-├── worker/           # Cloudflare Worker (receives from Cloudflare)
-│   ├── index.js
-│   └── wrangler.toml
-└── docs/
-    └── SETUP.md      # Detailed setup instructions
+├── scripts/
+│   ├── prime_mail_tray.ps1
+│   └── prime_mail_register_current_location.ps1
+├── start_backend.bat
+├── start_frontend.bat
+├── start_prime_mail.bat
+├── setup.bat
+├── dev.log
+└── docs/SETUP.md
 ```
 
-## 🔒 Privacy
+## Canonical Python runtime
 
-- Emails stored in SQLite on your R: drive
-- Cloudflare only sees email bytes in transit (no storage)
-- Webhook secured with secret key
-- No analytics, no tracking, no ads
+`setup.bat` provisions the backend environment here:
 
-## 🛠️ Tech Stack
+```text
+SPRUK_EMAIL\backend\venv\
+```
 
-- **Backend**: FastAPI + SQLite
-- **Frontend**: React 18
-- **Email Routing**: Cloudflare Email Routing + Workers
-- **Email Sending**: Cloudflare Email Service API
-- **Storage**: Local SQLite on R: drive
+That is the preferred VIV Communications backend runtime.
 
-## 📄 License
+The backend dependency set is declared in:
 
-MIT - Do whatever you want with it.
+```text
+backend\requirements.txt
+```
 
-## 2026-05-30: Major UI/UX and Architecture Upgrades
+and includes FastAPI, Uvicorn, HTTPX, Pydantic, multipart support, and Bleach.
 
-- Implemented a full Connections/Status panel in the Prime Mail frontend:
-  - Live status indicators for Prime Mail API, CALI CRM API, Desktop ORB API, CRM DB, Email DB, and Mesh/API manifest.
-  - Actions for refreshing status, testing ORB, and syncing email to CRM.
-  - Ask ORB (Assistant) placeholder added for future expansion.
-- Refactored Contacts section:
-  - Sidebar now shows a compact contacts shortcut.
-  - Full Contacts workspace/modal added with:
-    - List of all contacts (searchable, clickable)
-    - Detail/edit view for each contact (name, email, phone, address, photo, extra fields)
-    - Add new contact form
-    - Linked emails panel for each contact
-- All UI changes are fully styled and integrated with the existing design.
-- No changes to contact or email authority: Prime Mail remains mail authority, CALI CRM is contact authority, ORB is operator/assistant layer.
-- Verified: No HTTP sync, no duplicate DBs, all contact CRUD routed to shared CRM DB.
-- All changes tested and no errors found.
+### Backend dependency repair
+
+If startup reports `ModuleNotFoundError: No module named 'fastapi'`, do **not** assume the mail database or Cloudflare tunnel failed. It means the selected Python interpreter does not contain the backend dependency set.
+
+From the repository root:
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
+
+if (-not (Test-Path ".\venv\Scripts\python.exe")) {
+    python -m venv venv
+}
+
+& ".\venv\Scripts\python.exe" -m pip install -r requirements.txt
+& ".\venv\Scripts\python.exe" app.py
+```
+
+`start_backend.bat` probes for a compatible interpreter and prefers `backend\venv\Scripts\python.exe`. It will not deliberately select a Python environment that cannot import the required FastAPI/Uvicorn modules.
+
+## Canonical persistent paths
+
+The V4 composition entrypoint establishes the production storage defaults **before** importing the compatibility backend. That is important because `main.py` initializes SQLite during import.
+
+```text
+Mail authority:       R:\email_client\emails.db
+Attachments:          R:\email_client\attachments\
+Raw custody:          R:\email_client\vault\raw_email\
+VIV dossier/contact:  R:\Substrate_Vault_R\vaults\r_drive_system_records\crm\memory\cali_personal.db
+```
+
+A direct `backend\app.py` launch therefore resolves to the same mail database as tray/auto-start, even when the launcher environment variables are not already present. Mail storage and VIV dossier storage must never silently collapse into the same SQLite path.
+
+## API route-order invariant
+
+`backend/main.py` contains the React SPA fallback route `/{full_path:path}`. V4 integration routers are composed later by `backend/app.py`.
+
+The SPA fallback **must remain last in the FastAPI route table**. Otherwise a concrete GET API route such as:
+
+```text
+/api/contact-candidates
+```
+
+can be intercepted by the SPA fallback and return `index.html`. In the browser that appears as:
+
+```text
+Unexpected token '<', "<!DOCTYPE ..." is not valid JSON
+```
+
+`backend/app.py` now explicitly defers the SPA catch-all behind all concrete V4 API routes.
+
+## Build and launch
+
+### Development frontend on port 3000
+
+The React development client uses Create React App, so `npm start` runs on port `3000` by default. The frontend uses relative `/api` routes, so `frontend/package.json` contains a development proxy to `http://127.0.0.1:19000`.
+
+Run it only from the frontend directory:
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\frontend"
+npm start
+```
+
+If `npm` reports `ENOENT` / `package.json` not found, the command was run from the wrong directory, such as `backend\`.
+
+### Frontend validation/build
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\frontend"
+npm run build
+```
+
+### Normal application launch on port 19000
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email"
+.\start_prime_mail.bat
+```
+
+The launcher registers the current installation, starts the tray supervisor, ensures the frontend build is available, and starts the backend on port `19000`. Normal use can remain on port `19000`; port `3000` is only the optional React development server.
+
+### Direct backend validation
+
+```powershell
+Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\backend"
+& ".\venv\Scripts\python.exe" app.py
+```
+
+Expected backend/application URL:
+
+```text
+http://127.0.0.1:19000/
+```
+
+Expected development frontend URL when `npm start` is running:
+
+```text
+http://127.0.0.1:3000/
+```
+
+Expected public authenticated entrypoint:
+
+```text
+https://mail.spruked.com/
+```
+
+## Startup and diagnostics
+
+The tray supervisor is designed to continue running at Windows login after the application has been registered by `start_prime_mail.bat`.
+
+Useful checks:
+
+```powershell
+Get-NetTCPConnection -LocalPort 19000 -State Listen -ErrorAction SilentlyContinue
+Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+Get-Content "$env:LOCALAPPDATA\PrimeMail\tray.log" -Tail 100
+Get-Content "$env:LOCALAPPDATA\PrimeMail\backend.log" -Tail 100
+```
+
+Confirm the active mail store directly from the application:
+
+```text
+http://127.0.0.1:19000/api/health
+```
+
+The `storage` field should identify the canonical mail database, not the VIV dossier database.
+
+If port `19000` is not listening, diagnose the local backend before changing Cloudflare configuration.
+
+## UI containment safeguards
+
+The V4 shell includes targeted desktop containment rules for two issues observed during the August 26 acceptance pass:
+
+- the former `Search` text label could overlap the input placeholder;
+- the `Open` button in the Linked Dossier header was constrained too narrowly and could spill against the right viewport edge.
+
+`frontend/src/VIVCommunicationsFixes.css` is loaded after the existing V4 stylesheet so these corrections do not require a broad legacy-layout rewrite.
+
+## Identity and terminology
+
+The current product identity is **VIV Communications**.
+
+Current UI terminology uses:
+
+- **Star / Starred / Unstar** for email importance
+- **Dossier** for a canonical VIV subject record
+- **Business Context** for ordinary VIV scoping
+- **Compartment / clearance** only for security concepts
+
+Legacy `Prime Mail`, `CALI CRM`, and related names may still appear internally in compatibility filenames, environment keys, migration paths, or historical logs. They are not the intended current product-facing identity.
+
+## Development status — 2026-08-26
+
+The `prime-mail-v4` branch contains the VIV Communications identity conversion, VIV dossier bridge, business-context handoff, deep-link integration, HTML reader containment, human-governed unknown-source promotion, revised Windows startup/tray registration, Spruked-first primary sender behavior, and site-based mail sorting.
+
+During local acceptance on 2026-08-26, four regressions/configuration mismatches were isolated in the composition/startup layer rather than the long-running mail authority itself:
+
+1. a root-level Python environment without FastAPI was selected during manual validation;
+2. a manual V4 launch could inherit the wrong database fallback unless canonical mail/VIV paths were established before importing `main.py`;
+3. the legacy SPA catch-all could precede newly composed GET API routes and return HTML where JSON was expected;
+4. the React development frontend on port `3000` had relative `/api` calls but no CRA proxy, allowing API requests to fall back to the frontend HTML server instead of the backend on port `19000`.
+
+Source corrections for all four are implemented. The mailbox policy is also corrected so site-specific receiving addresses remain active and visible while `bryan@spruked.com` remains the primary personal/default sender.
+
+Runtime re-verification of restored inbox history, unknown-source review, site sorting, local auto-start, port `3000` development behavior, and the public authenticated path is still required before calling the incident fully verified.
+
+See `dev.log` for the detailed engineering history and verification state.

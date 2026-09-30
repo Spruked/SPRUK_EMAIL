@@ -12,12 +12,18 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 import sqlite3
 import json
 import hashlib
 import asyncio
 import httpx
+
+try:
+    from pywebpush import webpush, WebPushException
+except ImportError:
+    webpush = None
+    WebPushException = Exception
 
 import os
 import html as html_escape
@@ -132,6 +138,10 @@ CRM_ROOT = Path(os.getenv("CALI_CRM_PROJECT_ROOT", "R:/SPRUKED_CRM_MASTER_2026-0
 # (Removed: now handled by discover_orb_service)
 ORB_ROOT = Path(os.getenv("ORB_DESKTOP_ROOT", "R:/Orb_Assistant_Desktop"))
 ADMIN_ACCESS_TOKEN = os.getenv("CALI_ADMIN_TOKEN", os.getenv("ADMIN_ACCESS_TOKEN", "")).strip()
+VIV_PUSH_PUBLIC_KEY = os.getenv("VIV_PUSH_PUBLIC_KEY", "").strip()
+VIV_PUSH_PRIVATE_KEY = os.getenv("VIV_PUSH_PRIVATE_KEY", "").strip()
+VIV_PUSH_SUBJECT = os.getenv("VIV_PUSH_SUBJECT", "mailto:bryan@spruked.com").strip()
+VIV_PUBLIC_URL = os.getenv("VIV_PUBLIC_URL", "https://mail.spruked.com").rstrip("/")
 
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 Path(CONTACTS_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +254,68 @@ def cloudflare_error_detail(response: httpx.Response) -> str:
             for err in errors
         )
     return json.dumps(body)
+
+def html_to_plain_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", value)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p\s*>", "\n\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html_escape.unescape(re.sub(r"[ \t\r\f\v]+", " ", text)).strip()
+
+def parse_recipient_addresses(value: str) -> list[str]:
+    addresses = []
+    seen = set()
+    for _name, address in getaddresses([str(value or "")]):
+        normalized = normalize_email(address)
+        if normalized and "@" in normalized and normalized not in seen:
+            seen.add(normalized)
+            addresses.append(normalized)
+    if not addresses:
+        normalized = normalize_email(value)
+        if normalized and "@" in normalized:
+            addresses.append(normalized)
+    return addresses
+
+def cloudflare_delivery_status(status_code: int, payload: Dict[str, Any]) -> tuple[str, str]:
+    if not 200 <= status_code < 300:
+        return "failed", "HTTP error"
+    if payload and payload.get("success") is False:
+        return "failed", "Cloudflare returned success=false"
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if isinstance(result, dict):
+        delivered = result.get("delivered") or []
+        queued = result.get("queued") or []
+        bounced = result.get("permanent_bounces") or []
+        if bounced and not (delivered or queued):
+            return "failed", "All recipients bounced"
+        if delivered or queued:
+            return "sent", "Delivered or queued"
+    return "sent", "Accepted by Cloudflare"
+
+def record_sent_email(
+    *,
+    message_id: str,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    status: str,
+    cloudflare_response: str,
+) -> None:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO sent_emails (message_id, from_addr, to_addr, subject, text_body, html_body, sent_at, status, cloudflare_response)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        message_id, from_addr, to_addr, subject, text_body, html_body,
+        datetime.now().isoformat(), status, cloudflare_response
+    ))
+    conn.commit()
+    conn.close()
 
 def clean_thread_subject(subject: Optional[str]) -> str:
     clean_subject = subject or ""
@@ -470,6 +542,20 @@ def init_db():
             UNIQUE(account)
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint TEXT NOT NULL UNIQUE,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            device_name TEXT DEFAULT '',
+            privacy_level TEXT NOT NULL DEFAULT 'PRIVATE',
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            last_success_at TEXT,
+            last_error TEXT
+        )
+    """)
     c.execute('CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_emails_sender ON emails(sender)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)')
@@ -522,8 +608,80 @@ class IncomingEmail(BaseModel):
     read: bool = False
     source: str = "cloudflare_routing"
 
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]
+    device_name: str = ""
+    privacy_level: str = "PRIVATE"
+
+def _push_payload(email: IncomingEmail, privacy_level: str) -> Dict[str, Any]:
+    level = str(privacy_level or "PRIVATE").upper()
+    sender = email.from_.split("<", 1)[0].strip().strip('"') or email.from_.split("@", 1)[0]
+    title = "VIV Communications"
+    if level == "FULL":
+        body = f"{sender} — {email.subject or 'New message'}"
+    elif level == "LOCKED":
+        body = "New VIV Communication"
+    else:
+        body = f"New message from {sender}"
+    return {"title": title, "body": body, "url": f"{VIV_PUBLIC_URL}/?message={email.message_id}", "tag": f"viv-message-{email.message_id}"}
+
+async def send_new_message_push(email: IncomingEmail) -> None:
+    if not (webpush and VIV_PUSH_PUBLIC_KEY and VIV_PUSH_PRIVATE_KEY):
+        return
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM push_subscriptions WHERE enabled = 1").fetchall()
+    for row in rows:
+        payload = json.dumps(_push_payload(email, row["privacy_level"]))
+        try:
+            webpush(
+                subscription_info={"endpoint": row["endpoint"], "keys": {"p256dh": row["p256dh"], "auth": row["auth"]}},
+                data=payload,
+                vapid_private_key=VIV_PUSH_PRIVATE_KEY,
+                vapid_claims={"sub": VIV_PUSH_SUBJECT},
+            )
+            conn.execute("UPDATE push_subscriptions SET last_success_at = ?, last_error = NULL WHERE id = ?", (datetime.now().isoformat(), row["id"]))
+        except WebPushException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (404, 410):
+                conn.execute("UPDATE push_subscriptions SET enabled = 0, last_error = ? WHERE id = ?", (f"expired:{status}", row["id"]))
+            else:
+                conn.execute("UPDATE push_subscriptions SET last_error = ? WHERE id = ?", (str(exc)[:500], row["id"]))
+        except Exception as exc:
+            conn.execute("UPDATE push_subscriptions SET last_error = ? WHERE id = ?", (str(exc)[:500], row["id"]))
+    conn.commit()
+    conn.close()
+
+@app.get("/api/push/config")
+async def push_config():
+    return {"enabled": bool(webpush and VIV_PUSH_PUBLIC_KEY and VIV_PUSH_PRIVATE_KEY), "public_key": VIV_PUSH_PUBLIC_KEY}
+
+@app.post("/api/push/subscriptions")
+async def save_push_subscription(subscription: PushSubscriptionRequest):
+    if not subscription.endpoint or not subscription.keys.get("p256dh") or not subscription.keys.get("auth"):
+        raise HTTPException(status_code=400, detail="Invalid push subscription")
+    privacy = str(subscription.privacy_level or "PRIVATE").upper()
+    if privacy not in {"FULL", "PRIVATE", "LOCKED"}:
+        raise HTTPException(status_code=400, detail="privacy_level must be FULL, PRIVATE, or LOCKED")
+    conn = get_db()
+    conn.execute("""INSERT INTO push_subscriptions (endpoint, p256dh, auth, device_name, privacy_level, enabled, created_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth,
+        device_name=excluded.device_name, privacy_level=excluded.privacy_level, enabled=1, last_error=NULL""",
+        (subscription.endpoint, subscription.keys["p256dh"], subscription.keys["auth"], subscription.device_name, privacy, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    return {"status": "saved", "privacy_level": privacy}
+
+@app.delete("/api/push/subscriptions")
+async def remove_push_subscription(endpoint: str):
+    conn = get_db()
+    conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+    conn.commit()
+    conn.close()
+    return {"status": "removed"}
+
 @app.post("/api/emails/receive")
-async def receive_email(email: IncomingEmail, request: Request):
+async def receive_email(email: IncomingEmail, request: Request, background_tasks: BackgroundTasks):
     secret = request.headers.get("X-Email-Secret")
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid secret")
@@ -559,6 +717,7 @@ async def receive_email(email: IncomingEmail, request: Request):
         email_id = c.lastrowid
         sync_email_fts(c, email_id, email)
         conn.commit()
+        background_tasks.add_task(send_new_message_push, email)
         return {"status": "received", "id": email_id, "thread_id": thread_id}
     except sqlite3.IntegrityError:
         return {"status": "duplicate", "message": "Email already exists"}
@@ -575,11 +734,13 @@ async def get_emails(
     search_scope: str = "all",
     unread_only: bool = False,
     account: Optional[str] = None,
-    threaded: bool = False
+    threaded: bool = False,
+    order: str = "desc"
 ):
     conn = get_db()
     c = conn.cursor()
     selected_account = require_configured_account(account)
+    order_sql = "ASC" if str(order).lower() == "asc" else "DESC"
 
     if folder == "sent":
         default_sender = default_account_address()
@@ -625,7 +786,7 @@ async def get_emails(
             count_query += " AND (subject LIKE ? OR to_addr LIKE ? OR text_body LIKE ?)"
             count_params.extend([search_term, search_term, search_term])
 
-        query += " ORDER BY sent_at DESC LIMIT ? OFFSET ?"
+        query += f" ORDER BY sent_at {order_sql} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         c.execute(query, params)
         rows = c.fetchall()
@@ -662,7 +823,7 @@ async def get_emails(
         params.append(fts_query(search, search_scope))
 
     where_sql = " AND ".join(where_clauses)
-    query = f"{select_clause} WHERE {where_sql} ORDER BY emails.date DESC LIMIT ? OFFSET ?"
+    query = f"{select_clause} WHERE {where_sql} ORDER BY emails.date {order_sql} LIMIT ? OFFSET ?"
     c.execute(query, params + [limit, offset])
     rows = c.fetchall()
     emails = [dict(row) for row in rows]
@@ -1055,36 +1216,60 @@ async def send_email(req: SendEmailRequest):
     if (not has_token_auth and not has_key_auth) or not CLOUDFLARE_ACCOUNT_ID:
         raise HTTPException(status_code=500, detail="Cloudflare API not configured")
     from_addr = require_configured_account(req.from_address) or default_account_address()
+    recipients = parse_recipient_addresses(req.to)
+    if not recipients:
+        raise HTTPException(status_code=400, detail="At least one valid recipient is required")
+    message_id = f"sent_{datetime.now().timestamp()}"
+    text_body = req.text or html_to_plain_text(req.html) or ""
+    html_body = sanitize_html(req.html or text_to_html(text_body))
     payload = {
-        "to": req.to,
+        "to": recipients[0] if len(recipients) == 1 else recipients,
         "from": {"address": from_addr, "name": req.from_name},
         "subject": req.subject,
-        "text": req.text or "",
-        "html": sanitize_html(req.html or text_to_html(req.text or ""))
+        "text": text_body,
+        "html": html_body
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/email/sending/send",
-            headers=cloudflare_headers(),
-            json=payload,
-            timeout=30
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/email/sending/send",
+                headers=cloudflare_headers(),
+                json=payload,
+                timeout=30
+            )
+    except Exception as exc:
+        record_sent_email(
+            message_id=message_id,
+            from_addr=from_addr,
+            to_addr=", ".join(recipients),
+            subject=req.subject,
+            text_body=text_body,
+            html_body=html_body,
+            status="failed",
+            cloudflare_response=f"request_error: {exc}",
         )
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO sent_emails (message_id, from_addr, to_addr, subject, text_body, html_body, sent_at, status, cloudflare_response)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        f"sent_{datetime.now().timestamp()}", from_addr, req.to, req.subject, req.text, payload["html"],
-        datetime.now().isoformat(),
-        "sent" if response.status_code == 200 else "failed",
-        response.text
-    ))
-    conn.commit()
-    conn.close()
-    if not 200 <= response.status_code < 300:
-        raise HTTPException(status_code=response.status_code, detail=f"Failed to send: {cloudflare_error_detail(response)}")
-    return {"status": "sent", "to": req.to}
+        raise HTTPException(status_code=502, detail=f"Failed to send: {exc}") from exc
+
+    try:
+        response_payload = response.json()
+    except ValueError:
+        response_payload = {}
+
+    status, _reason = cloudflare_delivery_status(response.status_code, response_payload)
+    record_sent_email(
+        message_id=message_id,
+        from_addr=from_addr,
+        to_addr=", ".join(recipients),
+        subject=req.subject,
+        text_body=text_body,
+        html_body=html_body,
+        status=status,
+        cloudflare_response=response.text,
+    )
+    if status != "sent":
+        detail = cloudflare_error_detail(response) if not 200 <= response.status_code < 300 else json.dumps(response_payload)
+        raise HTTPException(status_code=response.status_code if response.status_code >= 400 else 502, detail=f"Failed to send: {detail}")
+    return {"status": "sent", "to": recipients, "cloudflare": response_payload.get("result") if isinstance(response_payload, dict) else None}
 
 @app.get("/api/drafts/{account}")
 async def get_draft(account: str):

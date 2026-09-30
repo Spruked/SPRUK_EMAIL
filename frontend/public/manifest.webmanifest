@@ -1,0 +1,13 @@
+{
+  "name": "VIV Communications",
+  "short_name": "VIV Mail",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#111c31",
+  "description": "Local-first VIV Communications mail surface.",
+  "icons": [
+    { "src": "/redVIVlogo.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/VIVLOGO.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
