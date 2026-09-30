@@ -5,6 +5,10 @@ import ContactReviewOverlay from './ContactReviewOverlay';
 import './ContactReviewOverlay.css';
 import './VIVCommunicationsFixes.css';
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <>

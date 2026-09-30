@@ -96,6 +96,14 @@ Expected result: Uvicorn listens on `127.0.0.1:19000`.
 
 ## Frontend setup/build
 
+### iPhone Web Push
+
+The built frontend is a Home Screen-capable PWA. On iOS 16.4 or later, open the HTTPS site in Safari, add it to the Home Screen, open the installed app, and use **Enable Notifications** in the sidebar.
+
+The backend stores subscriptions in the canonical email SQLite database and sends only for newly inserted inbound messages. Configure `VIV_PUBLIC_URL`, `VIV_PUSH_PUBLIC_KEY`, `VIV_PUSH_PRIVATE_KEY`, and `VIV_PUSH_SUBJECT` in `backend/.env`; install the backend requirements after changing `requirements.txt`. The private key is never sent to the frontend.
+
+Notification payloads support `FULL`, `PRIVATE`, and `LOCKED` content levels; the current UI registers new devices as `PRIVATE`.
+
 ```powershell
 Set-Location "C:\dev\Desktop\PLATFORM\Spruk_Email\frontend"
 npm install

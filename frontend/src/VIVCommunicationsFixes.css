@@ -23,3 +23,17 @@
   padding: 0 10px;
   white-space: nowrap;
 }
+
+.pm4-push-button {
+  width: calc(100% - 24px);
+  margin: 0 12px 14px;
+  min-height: 30px;
+  border: 1px solid #cbd7ea;
+  border-radius: 7px;
+  background: #eef4ff;
+  color: #244d8f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pm4-push-button:disabled { opacity: .62; cursor: not-allowed; }

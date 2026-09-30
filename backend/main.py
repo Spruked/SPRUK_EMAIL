@@ -19,6 +19,12 @@ import hashlib
 import asyncio
 import httpx
 
+try:
+    from pywebpush import webpush, WebPushException
+except ImportError:
+    webpush = None
+    WebPushException = Exception
+
 import os
 import html as html_escape
 import re
@@ -132,6 +138,10 @@ CRM_ROOT = Path(os.getenv("CALI_CRM_PROJECT_ROOT", "R:/SPRUKED_CRM_MASTER_2026-0
 # (Removed: now handled by discover_orb_service)
 ORB_ROOT = Path(os.getenv("ORB_DESKTOP_ROOT", "R:/Orb_Assistant_Desktop"))
 ADMIN_ACCESS_TOKEN = os.getenv("CALI_ADMIN_TOKEN", os.getenv("ADMIN_ACCESS_TOKEN", "")).strip()
+VIV_PUSH_PUBLIC_KEY = os.getenv("VIV_PUSH_PUBLIC_KEY", "").strip()
+VIV_PUSH_PRIVATE_KEY = os.getenv("VIV_PUSH_PRIVATE_KEY", "").strip()
+VIV_PUSH_SUBJECT = os.getenv("VIV_PUSH_SUBJECT", "mailto:bryan@spruked.com").strip()
+VIV_PUBLIC_URL = os.getenv("VIV_PUBLIC_URL", "https://mail.spruked.com").rstrip("/")
 
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 Path(CONTACTS_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -532,6 +542,20 @@ def init_db():
             UNIQUE(account)
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint TEXT NOT NULL UNIQUE,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            device_name TEXT DEFAULT '',
+            privacy_level TEXT NOT NULL DEFAULT 'PRIVATE',
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            last_success_at TEXT,
+            last_error TEXT
+        )
+    """)
     c.execute('CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_emails_sender ON emails(sender)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)')
@@ -584,8 +608,80 @@ class IncomingEmail(BaseModel):
     read: bool = False
     source: str = "cloudflare_routing"
 
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]
+    device_name: str = ""
+    privacy_level: str = "PRIVATE"
+
+def _push_payload(email: IncomingEmail, privacy_level: str) -> Dict[str, Any]:
+    level = str(privacy_level or "PRIVATE").upper()
+    sender = email.from_.split("<", 1)[0].strip().strip('"') or email.from_.split("@", 1)[0]
+    title = "VIV Communications"
+    if level == "FULL":
+        body = f"{sender} — {email.subject or 'New message'}"
+    elif level == "LOCKED":
+        body = "New VIV Communication"
+    else:
+        body = f"New message from {sender}"
+    return {"title": title, "body": body, "url": f"{VIV_PUBLIC_URL}/?message={email.message_id}", "tag": f"viv-message-{email.message_id}"}
+
+async def send_new_message_push(email: IncomingEmail) -> None:
+    if not (webpush and VIV_PUSH_PUBLIC_KEY and VIV_PUSH_PRIVATE_KEY):
+        return
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM push_subscriptions WHERE enabled = 1").fetchall()
+    for row in rows:
+        payload = json.dumps(_push_payload(email, row["privacy_level"]))
+        try:
+            webpush(
+                subscription_info={"endpoint": row["endpoint"], "keys": {"p256dh": row["p256dh"], "auth": row["auth"]}},
+                data=payload,
+                vapid_private_key=VIV_PUSH_PRIVATE_KEY,
+                vapid_claims={"sub": VIV_PUSH_SUBJECT},
+            )
+            conn.execute("UPDATE push_subscriptions SET last_success_at = ?, last_error = NULL WHERE id = ?", (datetime.now().isoformat(), row["id"]))
+        except WebPushException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (404, 410):
+                conn.execute("UPDATE push_subscriptions SET enabled = 0, last_error = ? WHERE id = ?", (f"expired:{status}", row["id"]))
+            else:
+                conn.execute("UPDATE push_subscriptions SET last_error = ? WHERE id = ?", (str(exc)[:500], row["id"]))
+        except Exception as exc:
+            conn.execute("UPDATE push_subscriptions SET last_error = ? WHERE id = ?", (str(exc)[:500], row["id"]))
+    conn.commit()
+    conn.close()
+
+@app.get("/api/push/config")
+async def push_config():
+    return {"enabled": bool(webpush and VIV_PUSH_PUBLIC_KEY and VIV_PUSH_PRIVATE_KEY), "public_key": VIV_PUSH_PUBLIC_KEY}
+
+@app.post("/api/push/subscriptions")
+async def save_push_subscription(subscription: PushSubscriptionRequest):
+    if not subscription.endpoint or not subscription.keys.get("p256dh") or not subscription.keys.get("auth"):
+        raise HTTPException(status_code=400, detail="Invalid push subscription")
+    privacy = str(subscription.privacy_level or "PRIVATE").upper()
+    if privacy not in {"FULL", "PRIVATE", "LOCKED"}:
+        raise HTTPException(status_code=400, detail="privacy_level must be FULL, PRIVATE, or LOCKED")
+    conn = get_db()
+    conn.execute("""INSERT INTO push_subscriptions (endpoint, p256dh, auth, device_name, privacy_level, enabled, created_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth,
+        device_name=excluded.device_name, privacy_level=excluded.privacy_level, enabled=1, last_error=NULL""",
+        (subscription.endpoint, subscription.keys["p256dh"], subscription.keys["auth"], subscription.device_name, privacy, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    return {"status": "saved", "privacy_level": privacy}
+
+@app.delete("/api/push/subscriptions")
+async def remove_push_subscription(endpoint: str):
+    conn = get_db()
+    conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+    conn.commit()
+    conn.close()
+    return {"status": "removed"}
+
 @app.post("/api/emails/receive")
-async def receive_email(email: IncomingEmail, request: Request):
+async def receive_email(email: IncomingEmail, request: Request, background_tasks: BackgroundTasks):
     secret = request.headers.get("X-Email-Secret")
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid secret")
@@ -621,6 +717,7 @@ async def receive_email(email: IncomingEmail, request: Request):
         email_id = c.lastrowid
         sync_email_fts(c, email_id, email)
         conn.commit()
+        background_tasks.add_task(send_new_message_push, email)
         return {"status": "received", "id": email_id, "thread_id": thread_id}
     except sqlite3.IntegrityError:
         return {"status": "duplicate", "message": "Email already exists"}

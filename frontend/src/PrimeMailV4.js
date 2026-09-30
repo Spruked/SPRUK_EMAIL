@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import './PrimeMailV4.css';
 
 const API_BASE = (process.env.REACT_APP_API_BASE || '/api').replace(/\/$/, '');
-const VIV_UI = (process.env.REACT_APP_VIV_UI_URL || process.env.REACT_APP_CRM_UI_URL || 'http://127.0.0.1:21010').replace(/\/$/, '');
+const VIV_UI = (process.env.REACT_APP_VIV_UI_URL || process.env.REACT_APP_CRM_UI_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:21010' : 'https://viv.spruked.com')).replace(/\/$/, '');
 
 const BUSINESS_OPTIONS = [
   ['all', 'All'],
@@ -187,6 +187,9 @@ export default function PrimeMailV4() {
   const [caliTimeline, setCaliTimeline] = useState([]);
   const [dossierLoading, setDossierLoading] = useState(false);
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+  const [pushState, setPushState] = useState({ enabled: false, supported: false, subscribed: false, busy: false });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [dossierOpen, setDossierOpen] = useState(false);
 
   const selectedAccount = currentAccount === 'all' ? (defaultAccount || accounts.find(account => account.is_primary)?.email || accounts[0]?.email || '') : currentAccount;
   const mailboxLabel = currentAccount === 'all' ? 'All Sites' : `${siteLabel(currentAccount)} · ${currentAccount}`;
@@ -240,6 +243,45 @@ export default function PrimeMailV4() {
     fetchEmails();
     refreshChrome();
   }, [fetchEmails, refreshChrome]);
+
+  useEffect(() => {
+    let active = true;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return undefined;
+    Promise.all([
+      navigator.serviceWorker.ready,
+      requestJson(`${API_BASE}/push/config`)
+    ]).then(([registration, config]) => registration.pushManager.getSubscription().then(subscription => {
+      if (active) setPushState({ enabled: Boolean(config.enabled && config.public_key), supported: true, subscribed: Boolean(subscription), busy: false });
+    })).catch(() => {});
+    return () => { active = false; };
+  }, [requestJson]);
+
+  function base64ToBytes(value) {
+    const padding = '='.repeat((4 - value.length % 4) % 4);
+    const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(char => char.charCodeAt(0)));
+  }
+
+  async function enablePush() {
+    if (!pushState.enabled || pushState.busy) return;
+    setPushState(prev => ({ ...prev, busy: true }));
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+      const config = await requestJson(`${API_BASE}/push/config`);
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(config.public_key) });
+      await requestJson(`${API_BASE}/push/subscriptions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: subscription.endpoint, keys: { p256dh: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('p256dh')))), auth: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth')))) }, device_name: navigator.userAgent, privacy_level: 'PRIVATE' })
+      });
+      setPushState(prev => ({ ...prev, subscribed: true, busy: false }));
+      setNotice('VIV notifications enabled.');
+    } catch (error) {
+      setPushState(prev => ({ ...prev, busy: false }));
+      setNotice(`Notifications unavailable: ${error.message}`);
+    }
+  }
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -301,6 +343,8 @@ export default function PrimeMailV4() {
     try {
       const data = await requestJson(`${API_BASE}/emails/${email.id}`);
       setSelectedEmail(data);
+      setSidebarOpen(false);
+      setDossierOpen(false);
     } catch (error) {
       setNotice(`Could not open message: ${error.message}`);
     }
@@ -468,6 +512,7 @@ export default function PrimeMailV4() {
   return (
     <div className="pm4-app">
       <header className="pm4-topbar">
+        <button className="pm4-mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Open navigation">☰</button>
         <div className="pm4-brand"><img className="pm4-brand-logo" src="/VIVLOGO.png" alt="VIV" /><strong>VIV Communications</strong></div>
         <div className="pm4-search-wrap"><span>Search</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Sender, subject, or message text..." /></div>
         <select className="pm4-account-select" value={currentAccount} onChange={event => { setCurrentAccount(event.target.value); setSelectedEmail(null); }}>
@@ -481,8 +526,9 @@ export default function PrimeMailV4() {
         <button className={`pm4-sync ${syncing ? 'busy' : ''}`} onClick={syncNow}><span />{syncing ? 'SYNCING' : 'SYNC VIV'}</button>
       </header>
 
-      <main className="pm4-shell">
-        <aside className="pm4-sidebar">
+      <main className={`pm4-shell ${selectedEmail ? 'has-selection' : ''}`}>
+        <aside className={`pm4-sidebar ${sidebarOpen ? 'mobile-open' : ''}`}>
+          <button className="pm4-mobile-close" onClick={() => setSidebarOpen(false)}>Close menu</button>
           <button className="pm4-compose-wide" onClick={() => openCompose()}>+ Compose</button>
           <div className="pm4-label">VIV COMMUNICATIONS</div>
           <div className="pm4-workspace"><button className="active">Mail</button><button onClick={() => openVIV('/contacts')}>Dossiers</button><button onClick={() => openVIV('/activities')}>Timeline</button></div>
@@ -497,6 +543,11 @@ export default function PrimeMailV4() {
 
           <div className="pm4-label">CONTEXT</div>
           <div className="pm4-business-card"><strong>{activeBusinessLabel}</strong><small>{businessScope === 'all' ? 'All contexts' : businessScope.replaceAll('_', ' ')}</small><select value={businessScope} onChange={event => changeBusiness(event.target.value)}>{BUSINESS_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
+
+          <div className="pm4-label">MOBILE NOTIFICATIONS</div>
+          <button className="pm4-push-button" onClick={enablePush} disabled={!pushState.enabled || pushState.subscribed || pushState.busy}>
+            {pushState.subscribed ? 'Notifications enabled' : pushState.busy ? 'Enabling...' : pushState.enabled ? 'Enable Notifications' : 'Push not configured'}
+          </button>
 
           <div className="pm4-label">LINKS</div>
           <div className="pm4-connected"><div><span className={`pm4-dot ${vivOnline ? 'green' : 'amber'}`} />VIV<small>{vivOnline ? 'Linked' : 'Check'}</small></div><div><span className={`pm4-dot ${calendarOnline ? 'green' : 'amber'}`} />Timeline<small>{calendarOnline ? 'Linked' : 'Check'}</small></div><div><span className="pm4-dot green" />Correlation<small>{syncing ? 'Working' : 'Ready'}</small></div></div>
@@ -513,14 +564,14 @@ export default function PrimeMailV4() {
 
         <section className="pm4-reader">
           {selectedEmail ? <>
-            <div className="pm4-reader-head"><h1>{selectedEmail.subject || '(No subject)'}</h1><div className="pm4-meta"><span>From</span><strong>{selectedEmail.sender}</strong><span>To</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
+            <div className="pm4-reader-head"><div className="pm4-mobile-reader-nav"><button onClick={() => setSelectedEmail(null)}>← Inbox</button><button onClick={() => setDossierOpen(true)}>Dossier</button></div><h1>{selectedEmail.subject || '(No subject)'}</h1><div className="pm4-meta"><span>From</span><strong>{selectedEmail.sender}</strong><span>To</span><strong>{selectedEmail.recipient}</strong><time>{formatDate(selectedEmail.date)}</time></div></div>
             {actionLink && <div className="pm4-security"><div><strong>External verification link detected</strong><small>This message contains an external identity-confirmation link.</small></div><button onClick={() => window.open(actionLink, '_blank', 'noopener,noreferrer')}>Open →</button></div>}
             <div className="pm4-reader-body">{selectedEmail.html_body ? <ReaderFrame html={selectedEmail.html_body} /> : <pre>{cleanText(selectedEmail.text_body || '')}</pre>}</div>
             <div className="pm4-reader-actions"><button onClick={reply}>Reply</button><button onClick={forward}>Forward</button><button onClick={archiveSelected}>Archive</button><button onClick={event => toggleStar(event, selectedEmail)}>{selectedEmail.starred ? 'Unstar' : 'Star'}</button><button className="danger" onClick={deleteSelected}>Delete</button><button onClick={snoozeSelected}>Snooze</button><button className="event" onClick={createEvent}>+ Event</button></div>
           </> : <div className="pm4-reader-empty"><img className="pm4-reader-logo" src="/VIVLOGO.png" alt="VIV" /><h2>VIV Communications</h2><p>Select a message to read it and load the linked dossier context.</p></div>}
         </section>
 
-        <aside className="pm4-dossier">
+        <aside className={`pm4-dossier ${dossierOpen ? 'mobile-open' : ''}`}>
           <div className="pm4-dossier-head"><div><strong>LINKED DOSSIER</strong><span>{dossierLoading ? 'RESOLVING' : 'READY'}</span></div><button onClick={() => openVIV('/contacts')}>Open</button></div>
           {selectedEmail ? <div className="pm4-dossier-scroll">
             <div className="pm4-person-card"><div className="pm4-avatar">{initials(senderName)}</div><div><h2>{senderName}</h2><p>{legacyContact.company_role || primaryRole?.role || (caliParty ? 'Known subject' : 'Unknown sender')}</p><span className={caliParty ? 'linked' : 'unlinked'}>{caliParty ? 'IDENTITY LINKED' : 'UNRESOLVED'}</span></div></div>
@@ -540,6 +591,7 @@ export default function PrimeMailV4() {
           </div> : <div className="pm4-dossier-empty">Select a message to load its VIV dossier context.</div>}
         </aside>
       </main>
+      {(sidebarOpen || dossierOpen) && <button className="pm4-drawer-scrim" onClick={() => { setSidebarOpen(false); setDossierOpen(false); }} aria-label="Close drawer" />}
 
       {notice && <div className="pm4-notice" onClick={() => setNotice('')}>{notice}<button>x</button></div>}
 
